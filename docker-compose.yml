@@ -7,14 +7,21 @@ services:
     ports:
       - "5000:5000"
     env_file:
-      - ./backend/.env # Passes your Neon and TURN keys securely
-    restart: unless-stopped # Automatically restarts if the server crashes
+      - ./backend/.env
+    restart: unless-stopped
 
   frontend:
-    build: ./frontend
+    build:
+      context: ./frontend
+      args:
+        # This passes your backend URL into the Next.js build process
+        - NEXT_PUBLIC_BACKEND_URL=${NEXT_PUBLIC_BACKEND_URL}
     container_name: kmegle-frontend
     ports:
       - "3000:3000"
+    # IMPORTANT: Next.js needs these at runtime too
+    env_file:
+      - ./frontend/.env.local 
     restart: unless-stopped
     depends_on:
-      - backend # Ensures the backend boots up first
+      - backend
