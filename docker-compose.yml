@@ -1,0 +1,20 @@
+version: '3.8'
+
+services:
+  backend:
+    build: ./backend
+    container_name: kmegle-backend
+    ports:
+      - "5000:5000"
+    env_file:
+      - ./backend/.env # Passes your Neon and TURN keys securely
+    restart: unless-stopped # Automatically restarts if the server crashes
+
+  frontend:
+    build: ./frontend
+    container_name: kmegle-frontend
+    ports:
+      - "3000:3000"
+    restart: unless-stopped
+    depends_on:
+      - backend # Ensures the backend boots up first
