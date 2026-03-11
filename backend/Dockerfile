@@ -21,4 +21,4 @@ EXPOSE 5000
 # Use a non-root user for better security (Best Practice)
 USER node
 
-CMD ["node", "server.js"]
+CMD ["node", "src/server.js"]
