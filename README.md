@@ -1,0 +1,1 @@
+change CORS- now it is "*"
