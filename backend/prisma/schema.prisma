@@ -1,0 +1,65 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+  url = env("DATABASE_URL")
+}
+
+model admin_audit_logs {
+  id                                           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  admin_id                                     String?   @db.VarChar(128)
+  target_user_id                               String?   @db.VarChar(128)
+  action_type                                  String    @db.VarChar(50)
+  notes                                        String?
+  created_at                                   DateTime? @default(now()) @db.Timestamptz(6)
+  users_admin_audit_logs_admin_idTousers       users?    @relation("admin_audit_logs_admin_idTousers", fields: [admin_id], references: [id], onUpdate: NoAction)
+  users_admin_audit_logs_target_user_idTousers users?    @relation("admin_audit_logs_target_user_idTousers", fields: [target_user_id], references: [id], onUpdate: NoAction)
+}
+
+model reports {
+  id                               String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  reporter_id                      String?   @db.VarChar(128)
+  reported_id                      String?   @db.VarChar(128)
+  reason                           String
+  status                           String?   @default("pending") @db.VarChar(20)
+  created_at                       DateTime? @default(now()) @db.Timestamptz(6)
+  users_reports_reported_idTousers users?    @relation("reports_reported_idTousers", fields: [reported_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  users_reports_reporter_idTousers users?    @relation("reports_reporter_idTousers", fields: [reporter_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+}
+
+model user_blocks {
+  blocker_id                          String    @db.VarChar(128)
+  blocked_id                          String    @db.VarChar(128)
+  created_at                          DateTime? @default(now()) @db.Timestamptz(6)
+  users_user_blocks_blocked_idTousers users     @relation("user_blocks_blocked_idTousers", fields: [blocked_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  users_user_blocks_blocker_idTousers users     @relation("user_blocks_blocker_idTousers", fields: [blocker_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@id([blocker_id, blocked_id])
+}
+
+model users {
+  id                                                      String             @id @db.VarChar(128)
+  email_hash                                              String             @unique @db.VarChar(255)
+  role                                                    String?            @default("student") @db.VarChar(20)
+  is_banned                                               Boolean?           @default(false)
+  created_at                                              DateTime?          @default(now()) @db.Timestamptz(6)
+  banned_until                                            DateTime?          @db.Timestamptz(6)
+  last_login                                              DateTime?          @default(now()) @db.Timestamptz(6)
+
+  // 👑 --- THE PREMIUM ENGINE --- 👑
+  gender           String?   @db.VarChar(20) 
+  college          String?   @db.VarChar(100) 
+  isIncognito      Boolean   @default(true)
+  isPremium        Boolean   @default(false)
+  premiumExpiresAt DateTime? @db.Timestamptz(6)
+
+  admin_audit_logs_admin_audit_logs_admin_idTousers       admin_audit_logs[] @relation("admin_audit_logs_admin_idTousers")
+  admin_audit_logs_admin_audit_logs_target_user_idTousers admin_audit_logs[] @relation("admin_audit_logs_target_user_idTousers")
+  reports_reports_reported_idTousers                      reports[]          @relation("reports_reported_idTousers")
+  reports_reports_reporter_idTousers                      reports[]          @relation("reports_reporter_idTousers")
+  user_blocks_user_blocks_blocked_idTousers               user_blocks[]      @relation("user_blocks_blocked_idTousers")
+  user_blocks_user_blocks_blocker_idTousers               user_blocks[]      @relation("user_blocks_blocker_idTousers")
+}

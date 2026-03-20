@@ -3,6 +3,10 @@ const express = require("express");
 const http = require("http");
 const { Server } = require("socket.io");
 const cors = require("cors");
+const { PrismaClient } = require("@prisma/client");
+const prisma = new PrismaClient();
+const crypto = require("crypto");
+
 
 const db = require("./config/db");
 const dbService = require("./services/dbService");
@@ -204,6 +208,45 @@ app.post("/api/admin/ban", async (req, res) => {
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: "Failed to update ban status" });
+  }
+});
+
+// 👑 THE ONBOARDING GATEWAY 👑
+app.post('/api/users/init', async (req, res) => {
+  const { uid, email, gender, college } = req.body;
+
+  if (!uid || !email || !gender) {
+    return res.status(400).json({ error: "Missing required fields." });
+  }
+
+  try {
+    // Hash the email to maintain the anonymous architecture you built
+    const emailHash = crypto.createHash('sha256').update(email).digest('hex');
+
+    // UPSERT: Create if they are new, Update if they already exist
+    const user = await prisma.users.upsert({
+      where: { id: uid },
+      update: {
+        gender: gender,
+        college: college,
+        lastLogin: new Date(),
+      },
+      create: {
+        id: uid,
+        emailHash: emailHash,
+        gender: gender,
+        college: college,
+        isIncognito: true,   // Ghost by default
+        isPremium: false,    // Free by default
+        role: "student"
+      }
+    });
+
+    res.status(200).json({ success: true, user });
+    
+  } catch (error) {
+    console.error("Database error during init:", error);
+    res.status(500).json({ error: "Failed to initialize user profile." });
   }
 });
 

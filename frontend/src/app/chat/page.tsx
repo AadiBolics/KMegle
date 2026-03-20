@@ -6,6 +6,10 @@ import { onAuthStateChanged, signOut } from "firebase/auth";
 import { useRouter } from "next/navigation";
 import { io, Socket } from "socket.io-client";
 
+import PremiumDrawer from "../../components/premiumDrawer";
+import PremiumModal from "../../components/premiumModal";
+import ProfileCaptureModal from "@/src/components/profileCaptureModal";
+
 interface ChatMessage {
   sender: "me" | "stranger" | "system";
   text: string;
@@ -33,6 +37,12 @@ export default function ChatDashboard() {
   const roomIdRef = useRef<string | null>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
 
+  const [isDrawerOpen, setIsDrawerOpen] = useState(false);
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isIncognito, setIsIncognito] = useState(true);
+  const [isCaptureModalOpen, setIsCaptureModalOpen] = useState(true);
+  
+
   const router = useRouter();
 
   useEffect(() => {
@@ -58,6 +68,38 @@ export default function ChatDashboard() {
       cleanupConnection();
     };
   }, [router]);
+
+
+  const handleProfileSubmit = async (gender: string, college: string) => {
+    // 1. Double check we actually have the Firebase user data
+    if (!auth.currentUser || !userEmail) return;
+
+    try {
+      const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:5000";
+      
+      // 2. Fire the payload to your Node.js server
+      const response = await fetch(`${backendUrl}/api/users/init`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          uid: auth.currentUser.uid,
+          email: userEmail,
+          gender: gender,
+          college: college
+        }),
+      });
+
+      if (!response.ok) throw new Error("Backend rejected the profile initialization.");
+
+      // 3. Success! Unlock the gate and let them into the app.
+      console.log("Profile locked in. Welcome to K-Megle.");
+      setIsCaptureModalOpen(false);
+      
+    } catch (error) {
+      console.error("Network error:", error);
+      // Optional: You could add a small error state here to show on the UI
+    }
+  };
 
   const cleanupConnection = () => {
     if (socket && roomId) socket.emit("leave_room", { roomId });
@@ -327,20 +369,51 @@ export default function ChatDashboard() {
     );
 
   return (
-    <div className="h-screen w-full bg-[#0a0a0f] text-white flex flex-col md:flex-row overflow-hidden font-sans">
+    <div className="h-screen w-full bg-[#0a0a0f] text-white flex flex-col md:flex-row overflow-hidden font-sans relative">
       
-      {/* HEADER: Hidden in Fullscreen to keep it immersive */}
+      {/* 🚨 INJECT THE NEW CAPTURE MODAL HERE */}
+      <ProfileCaptureModal
+        isOpen={isCaptureModalOpen}
+        userEmail={userEmail}
+        onSubmit={handleProfileSubmit}
+      />
+
+      {/* Inject our Modular Components */}
+      <PremiumDrawer 
+        isOpen={isDrawerOpen} 
+        onClose={() => setIsDrawerOpen(false)}
+        userEmail={userEmail}
+        onLogout={handleLogout}
+        onTriggerModal={() => {
+          setIsModalOpen(true);
+        }}
+        isIncognito={isIncognito}
+        onToggleIncognito={() => setIsIncognito(!isIncognito)}
+      />
+
+      <PremiumModal 
+        isOpen={isModalOpen}
+        onClose={() => setIsModalOpen(false)}
+      />
+
+      {/* HEADER: Updated with dynamic Burger Icon */}
       {!isFullscreen && (
         <header className="absolute top-0 left-0 w-full p-6 flex justify-between items-center z-40 bg-gradient-to-b from-black/80 to-transparent pointer-events-none">
           <h1 className="text-2xl font-black text-white tracking-tighter drop-shadow-md pointer-events-auto">
             K-MEGLE<span className="text-indigo-500">.</span>
           </h1>
-          <button
-            onClick={handleLogout}
-            className="bg-white/10 hover:bg-white/20 backdrop-blur-md border border-white/10 px-5 py-2 rounded-full text-sm font-semibold transition-all pointer-events-auto shadow-lg"
-          >
-            Exit
-          </button>
+          
+          {/* THE LOCK LOGIC: Only show the burger menu if NOT in an active chat */}
+          {!remoteStream && (
+             <button
+               onClick={() => setIsDrawerOpen(true)}
+               className="p-2 bg-white/5 hover:bg-white/10 backdrop-blur-md border border-white/10 rounded-xl transition-all pointer-events-auto shadow-lg group"
+             >
+               <svg className="w-6 h-6 text-gray-300 group-hover:text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+               </svg>
+             </button>
+          )}
         </header>
       )}
 
