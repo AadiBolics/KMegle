@@ -20,13 +20,13 @@ export default function LoginPage() {
       const user = result.user;
 
       // The Gatekeeper Check
-      if (user.email && (user.email.endsWith("@iiitkottayam.ac.in") || user.email.endsWith("@gmail.com"))) {
+      if (user.email && (user.email.endsWith("@iiitkottayam.ac.in") || user.email.endsWith("@gmail.com") || user.email.endsWith("@tkmce.ac.in") || user.email.endsWith("amrita.edu"))) {
         // Success! Send them to the chat arena
         router.push("/chat");
       } else {
         // Intruder detected. Kick them out immediately.
         await signOut(auth);
-        setError("Access Denied: You must use a valid @iiitkottayam.ac.in email.");
+        setError("Access Denied: You must use a valid college email.");
       }
     } catch (err: any) {
       console.error("Login failed:", err);
