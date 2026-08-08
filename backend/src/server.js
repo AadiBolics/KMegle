@@ -34,6 +34,7 @@ class MatchmakerQueue {
     this.tail = null;
     this.size = 0;
     this.nodesMap = new Map(); 
+    this.isMatching = false;
   }
 
   add(socket, userId) {
@@ -69,45 +70,58 @@ class MatchmakerQueue {
   }
 
   async tryMatch() {
-    if (this.size >= 2) {
-      const user1 = this.head;
-      let user2 = user1.next;
-      let foundMatch = false;
+    if (this.isMatching) return;
+    this.isMatching = true;
 
-      // Loop through the queue until we find someone User 1 HASN'T blocked
-      while (user2) {
-        const hasBlocked = await dbService.hasBlocked(user1.userId, user2.userId);
-        
-        if (!hasBlocked) {
-          foundMatch = true;
-          break; // Perfect match!
+    try {
+      while (this.size >= 2) {
+        const user1 = this.head;
+        if (!user1) break;
+
+        let user2 = user1.next;
+        let foundMatch = false;
+
+        // Loop through the queue until we find someone User 1 HASN'T blocked
+        while (user2) {
+          let hasBlocked = false;
+          try {
+            hasBlocked = await dbService.hasBlocked(user1.userId, user2.userId);
+          } catch (e) {
+            console.error("Error checking block status:", e);
+          }
+          
+          if (!hasBlocked) {
+            foundMatch = true;
+            break; // Match found!
+          }
+          
+          console.log(`🚫 Skipped match due to block rules between ${user1.userId} and ${user2.userId}`);
+          user2 = user2.next;
         }
+
+        // If everyone in line is blocked or no user2, stop for now
+        if (!foundMatch || !user2) break; 
+
+        this.remove(user1.socket.id);
+        this.remove(user2.socket.id);
+
+        const roomId = `room_${user1.socket.id}_${user2.socket.id}`;
         
-        console.log(`🚫 Skipped match due to block rules between ${user1.userId} and ${user2.userId}`);
-        user2 = user2.next; // Skip to the next person in line
+        activeRooms.set(roomId, {
+          u1: user1.userId,
+          u2: user2.userId
+        });
+
+        user1.socket.join(roomId);
+        user2.socket.join(roomId);
+
+        user1.socket.emit("match_found", { role: "initiator", roomId });
+        user2.socket.emit("match_found", { role: "responder", roomId });
+
+        console.log(`🎉 Match created: ${user1.userId} and ${user2.userId}`);
       }
-
-      // If everyone in line is blocked, just stop trying for now
-      if (!foundMatch) return; 
-
-      this.remove(user1.socket.id);
-      this.remove(user2.socket.id);
-
-      const roomId = `room_${user1.socket.id}_${user2.socket.id}`;
-      
-      // NEW: Store the identities of the people in this room so we can block them later!
-      activeRooms.set(roomId, {
-        u1: user1.userId,
-        u2: user2.userId
-      });
-
-      user1.socket.join(roomId);
-      user2.socket.join(roomId);
-
-      user1.socket.emit("match_found", { role: "initiator", roomId });
-      user2.socket.emit("match_found", { role: "responder", roomId });
-
-      console.log(`🎉 Match created: ${user1.userId} and ${user2.userId}`);
+    } finally {
+      this.isMatching = false;
     }
   }
 }
@@ -120,15 +134,14 @@ io.on("connection", (socket) => {
   socket.on("find_match", async ({ userId }) => {
     if (!userId) return;
     
-    socket.userId = userId; // Bind their identity to the socket directly
+    socket.userId = userId;
     
     console.log(`🔍 User ${userId} entered the queue...`);
     
-    // Safety Gate: Bounce them if they are banned
     const isBanned = await dbService.isUserBanned(userId);
     if (isBanned) {
       console.log(`🛑 Banned user ${userId} tried to connect.`);
-      socket.emit("banned_alert", { message: "Your account has been banned." });
+      socket.emit("banned_alert", { message: "Your account has been suspended for policy violations." });
       return; 
     }
 
@@ -139,13 +152,11 @@ io.on("connection", (socket) => {
     queue.remove(socket.id);
   });
 
-  // --- NEW: THE BLOCK ENGINE ---
   socket.on("block_user", async ({ roomId }) => {
     const roomData = activeRooms.get(roomId);
     if (!roomData) return;
 
     const blockerId = socket.userId;
-    // Figure out which ID belongs to the stranger
     const blockedId = roomData.u1 === blockerId ? roomData.u2 : roomData.u1;
 
     if (blockerId && blockedId) {
@@ -159,10 +170,9 @@ io.on("connection", (socket) => {
   socket.on("leave_room", ({ roomId }) => {
     socket.to(roomId).emit("stranger_disconnected");
     socket.leave(roomId);
-    activeRooms.delete(roomId); // Clean up memory to prevent leaks
+    activeRooms.delete(roomId);
   });
 
-  // --- WEBRTC SIGNALING ---
   socket.on("webrtc_offer", ({ offer, roomId }) => socket.to(roomId).emit("webrtc_offer", { offer }));
   socket.on("webrtc_answer", ({ answer, roomId }) => socket.to(roomId).emit("webrtc_answer", { answer }));
   socket.on("webrtc_ice_candidate", ({ candidate, roomId }) => socket.to(roomId).emit("webrtc_ice_candidate", { candidate }));
@@ -173,16 +183,26 @@ io.on("connection", (socket) => {
     for (const [roomId, users] of activeRooms.entries()) {
       if (roomId.includes(socket.id)) {
         socket.to(roomId).emit("stranger_disconnected");
-        activeRooms.delete(roomId); // Clean up the room
+        activeRooms.delete(roomId);
         break;
       }
     }
   });
 });
 
+// Admin Protection Middleware
+const ADMIN_SECRET = process.env.ADMIN_SECRET_KEY || "kmegle_admin_secret_key_2026";
 
-// Fetch all users for the dashboard
-app.get("/api/admin/users", async (req, res) => {
+const adminAuth = (req, res, next) => {
+  const key = req.headers["x-admin-key"] || req.query.adminKey;
+  if (!key || key !== ADMIN_SECRET) {
+    return res.status(401).json({ error: "Unauthorized: Invalid or missing Admin Key" });
+  }
+  next();
+};
+
+// Fetch all users for the dashboard (Protected)
+app.get("/api/admin/users", adminAuth, async (req, res) => {
   try {
     const result = await db.query("SELECT id, email_hash, is_banned, created_at FROM users ORDER BY created_at DESC");
     res.json(result.rows);
@@ -191,8 +211,8 @@ app.get("/api/admin/users", async (req, res) => {
   }
 });
 
-// Toggle a user's ban status
-app.post("/api/admin/ban", async (req, res) => {
+// Toggle a user's ban status (Protected)
+app.post("/api/admin/ban", adminAuth, async (req, res) => {
   const { userId, banStatus } = req.body;
   try {
     await db.query("UPDATE users SET is_banned = $1 WHERE id = $2", [banStatus, userId]);
