@@ -41,28 +41,44 @@ export default function ChatDashboard() {
 
   const router = useRouter();
 
-  const iceConfig: RTCConfiguration = {
-    iceServers: [
-      { urls: "stun:stun.l.google.com:19302" },
-      { urls: "stun:stun1.l.google.com:19302" },
-      { urls: "stun:stun2.l.google.com:19302" },
-      { urls: "stun:openrelay.metered.ca:80" },
-      {
-        urls: "turn:openrelay.metered.ca:80",
-        username: "openrelayproject",
-        credential: "openrelayproject",
-      },
-      {
-        urls: "turn:openrelay.metered.ca:443",
-        username: "openrelayproject",
-        credential: "openrelayproject",
-      },
-      {
-        urls: "turn:openrelay.metered.ca:443?transport=tcp",
-        username: "openrelayproject",
-        credential: "openrelayproject",
-      },
-    ],
+  const getIceConfig = async (): Promise<RTCConfiguration> => {
+    const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:5000";
+    try {
+      const res = await fetch(`${backendUrl}/api/turn-credentials`);
+      const turnData = await res.json();
+      if (turnData.username && turnData.credential) {
+        return {
+          iceServers: [
+            { urls: "stun:stun.l.google.com:19302" },
+            { urls: "stun:stun1.l.google.com:19302" },
+            {
+              urls: "turn:global.relay.metered.ca:80",
+              username: turnData.username,
+              credential: turnData.credential,
+            },
+            {
+              urls: "turn:global.relay.metered.ca:443",
+              username: turnData.username,
+              credential: turnData.credential,
+            },
+            {
+              urls: "turn:global.relay.metered.ca:443?transport=tcp",
+              username: turnData.username,
+              credential: turnData.credential,
+            },
+          ],
+        };
+      }
+    } catch (err) {
+      console.warn("Could not fetch TURN credentials from backend, falling back to STUN.");
+    }
+
+    return {
+      iceServers: [
+        { urls: "stun:stun.l.google.com:19302" },
+        { urls: "stun:stun1.l.google.com:19302" },
+      ],
+    };
   };
 
   useEffect(() => {
@@ -205,7 +221,8 @@ export default function ChatDashboard() {
             peerConnectionRef.current.close();
           }
 
-          const pc = new RTCPeerConnection(iceConfig);
+          const dynamicIceConfig = await getIceConfig();
+          const pc = new RTCPeerConnection(dynamicIceConfig);
           peerConnectionRef.current = pc;
 
           stream.getTracks().forEach((track) => pc.addTrack(track, stream));

@@ -190,6 +190,13 @@ io.on("connection", (socket) => {
   });
 });
 
+app.get("/api/turn-credentials", (req, res) => {
+  res.json({
+    username: process.env.TURN_USERNAME,
+    credential: process.env.TURN_PASSWORD
+  });
+});
+
 // Admin Protection Middleware
 const ADMIN_SECRET = process.env.ADMIN_SECRET_KEY || "kmegle_admin_secret_key_2026";
 
