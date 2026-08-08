@@ -1,8 +1,6 @@
-"use client";
+﻿"use client";
 
 import { useEffect, useState, useRef } from "react";
-import { auth } from "../../lib/firebase";
-import { onAuthStateChanged, signOut } from "firebase/auth";
 import { useRouter } from "next/navigation";
 import { io, Socket } from "socket.io-client";
 
@@ -11,9 +9,19 @@ interface ChatMessage {
   text: string;
 }
 
+// Get or generate anonymous user ID from session storage
+function getAnonymousId(): string {
+  if (typeof window === "undefined") return "anon_server";
+  let userId = sessionStorage.getItem("kmegle_user_id");
+  if (!userId) {
+    userId = "anon_" + crypto.randomUUID();
+    sessionStorage.setItem("kmegle_user_id", userId);
+  }
+  return userId;
+}
+
 export default function ChatDashboard() {
-  const [userEmail, setUserEmail] = useState<string | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(false);
   const [socket, setSocket] = useState<Socket | null>(null);
   const [status, setStatus] = useState<string>("Ready to connect.");
   const [roomId, setRoomId] = useState<string | null>(null);
@@ -35,29 +43,19 @@ export default function ChatDashboard() {
 
   const router = useRouter();
 
+  // Free STUN-only ICE config (no cost)
+  const iceConfig: RTCConfiguration = {
+    iceServers: [
+      { urls: "stun:stun.l.google.com:19302" },
+      { urls: "stun:stun1.l.google.com:19302" },
+      { urls: "stun:stun2.l.google.com:19302" },
+      { urls: "stun:stun3.l.google.com:19302" },
+    ],
+  };
+
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
-
-  useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (user) => {
-      if (
-        user &&
-        (user.email?.endsWith("@iiitkottayam.ac.in") ||
-          user.email?.endsWith("@gmail.com"))
-      ) {
-        setUserEmail(user.email);
-        setIsLoading(false);
-      } else {
-        router.push("/");
-      }
-    });
-
-    return () => {
-      unsubscribe();
-      cleanupConnection();
-    };
-  }, [router]);
 
   const cleanupConnection = () => {
     if (socket && roomId) socket.emit("leave_room", { roomId });
@@ -70,7 +68,7 @@ export default function ChatDashboard() {
     setRoomId(null);
     dataChannelRef.current = null;
     setMessages([]);
-    pendingCandidates.current = [];    
+    pendingCandidates.current = [];
   };
 
   const resetForNextMatch = () => {
@@ -83,9 +81,8 @@ export default function ChatDashboard() {
     setMessages([{ sender: "system", text: "Looking for a new stranger..." }]);
   };
 
-  const handleLogout = async () => {
+  const handleExit = () => {
     cleanupConnection();
-    await signOut(auth);
     router.push("/");
   };
 
@@ -114,25 +111,19 @@ export default function ChatDashboard() {
     setChatInput("");
   };
 
-  // UPDATED: Now sends the Firebase UID to the server
   const handleNext = () => {
     if (!socket) return;
     resetForNextMatch();
     setStatus("Skipped. Entering the waiting pool...");
-    socket.emit("find_match", { userId: auth.currentUser?.uid });
+    socket.emit("find_match", { userId: getAnonymousId() });
   };
 
-  // NEW: The Block Logic
   const handleBlock = () => {
     if (!socket || !roomId) return;
-
-    // 1. Tell the backend to blacklist this room pair
     socket.emit("block_user", { roomId });
-
-    // 2. Disconnect and find someone new instantly
     resetForNextMatch();
     setStatus("User blocked. Finding someone new...");
-    socket.emit("find_match", { userId: auth.currentUser?.uid });
+    socket.emit("find_match", { userId: getAnonymousId() });
   };
 
   const handleToggleSearch = async () => {
@@ -153,71 +144,36 @@ export default function ChatDashboard() {
         if (localVideoRef.current) localVideoRef.current.srcObject = stream;
 
         setStatus("Camera active. Connecting to server...");
-        // Automatically detects your laptop's Wi-Fi IP address
         const backendUrl =
           process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:5000";
         const newSocket = io(backendUrl, {
-          transports: ["websocket"], // Keep this to prevent Cloudflare 502 errors!
+          transports: ["websocket"],
         });
         setSocket(newSocket);
 
         newSocket.on("connect", () => {
           setStatus("Connected! Entering the waiting pool...");
-          // UPDATED: Sends identity to the database when entering the queue
-          newSocket.emit("find_match", { userId: auth.currentUser?.uid });
+          newSocket.emit("find_match", { userId: getAnonymousId() });
         });
 
-        // --- NEW: Listen for Banned Alerts ---
         newSocket.on("banned_alert", (data) => {
           setStatus(`🚨 ${data.message}`);
-          cleanupConnection(); // Immediately rip them out of the socket
+          cleanupConnection();
         });
 
         newSocket.on("match_found", async (data) => {
-          setStatus(`Match found! Connecting secure video...`);
+          setStatus(`Match found! Connecting video...`);
           setRoomId(data.roomId);
           roomIdRef.current = data.roomId;
           setMessages([
             {
               sender: "system",
-              text: "You are now chatting with a random student.",
+              text: "You are now chatting with a random stranger.",
             },
           ]);
 
-          // 1. Fetch the secure TURN credentials from your own backend
-          let dynamicIceServers: RTCConfiguration = {
-            iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
-          };
-          try {
-            // Use the env variable, with a fallback just in case
-            const backendUrl =
-              process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:5000";
-            const turnRes = await fetch(`${backendUrl}/api/turn-credentials`);
-            const turnData = await turnRes.json();
-
-            dynamicIceServers = {
-              iceServers: [
-                { urls: "stun:stun.l.google.com:19302" },
-                {
-                  urls: "turn:global.relay.metered.ca:80",
-                  username: turnData.username,
-                  credential: turnData.credential,
-                },
-                {
-                  urls: "turn:global.relay.metered.ca:443",
-                  username: turnData.username,
-                  credential: turnData.credential,
-                },
-              ],
-            };
-          } catch (err) {
-            console.error(
-              "Could not fetch TURN servers, falling back to STUN only.",
-            );
-          }
-
-          // 2. Pass the dynamic servers into the Peer Connection!
-          const pc = new RTCPeerConnection(dynamicIceServers);
+          // Use only free STUN servers — no TURN costs
+          const pc = new RTCPeerConnection(iceConfig);
           peerConnectionRef.current = pc;
 
           stream.getTracks().forEach((track) => pc.addTrack(track, stream));
@@ -256,34 +212,28 @@ export default function ChatDashboard() {
           const answer = await pc.createAnswer();
           await pc.setLocalDescription(answer);
 
-          // Send the answer back
-          newSocket.emit("webrtc_answer", { answer, roomId:roomIdRef.current });
+          newSocket.emit("webrtc_answer", { answer, roomId: roomIdRef.current });
 
-          // NEW: Flush the waiting room! Add any ICE candidates that arrived early
           pendingCandidates.current.forEach(async (candidate) => {
             try {
               await pc.addIceCandidate(new RTCIceCandidate(candidate));
             } catch (e) {}
           });
-          pendingCandidates.current = []; // Clear the queue
+          pendingCandidates.current = [];
         });
 
         newSocket.on("webrtc_answer", async ({ answer }) => {
           const pc = peerConnectionRef.current;
-          
-          // NEW: If the connection is dead, OR if it is already finished (stable), ignore the packet!
           if (!pc || pc.signalingState === "closed" || pc.signalingState === "stable") return;
 
           try {
             await pc.setRemoteDescription(new RTCSessionDescription(answer));
-
-            // Flush the waiting room! Add any ICE candidates that arrived early
             pendingCandidates.current.forEach(async (candidate) => {
               try {
                 await pc.addIceCandidate(new RTCIceCandidate(candidate));
               } catch (e) {}
             });
-            pendingCandidates.current = []; // Clear the queue
+            pendingCandidates.current = [];
           } catch (err) {
             console.error("Error setting remote description:", err);
           }
@@ -293,7 +243,6 @@ export default function ChatDashboard() {
           const pc = peerConnectionRef.current;
           if (!pc || pc.signalingState === "closed") return;
 
-          // NEW: If the handshake is done, add it. If not, put it in the waiting room!
           if (pc.remoteDescription) {
             try {
               await pc.addIceCandidate(new RTCIceCandidate(candidate));
@@ -302,6 +251,7 @@ export default function ChatDashboard() {
             pendingCandidates.current.push(candidate);
           }
         });
+
         newSocket.on("stranger_disconnected", () => {
           setStatus("Stranger disconnected.");
           setMessages((prev) => [
@@ -333,10 +283,10 @@ export default function ChatDashboard() {
       {!isFullscreen && (
         <header className="absolute top-0 left-0 w-full p-6 flex justify-between items-center z-40 bg-gradient-to-b from-black/80 to-transparent pointer-events-none">
           <h1 className="text-2xl font-black text-white tracking-tighter drop-shadow-md pointer-events-auto">
-            K-MEGLE<span className="text-indigo-500">.</span>
+            KMegle<span className="text-indigo-500">.</span>
           </h1>
           <button
-            onClick={handleLogout}
+            onClick={handleExit}
             className="bg-white/10 hover:bg-white/20 backdrop-blur-md border border-white/10 px-5 py-2 rounded-full text-sm font-semibold transition-all pointer-events-auto shadow-lg"
           >
             Exit
@@ -347,7 +297,7 @@ export default function ChatDashboard() {
       {/* LEFT SIDE: The Video Engine */}
       <div className={`relative group flex-grow ${isFullscreen ? 'absolute inset-0 z-50' : 'w-full md:w-[70%] h-[60vh] md:h-full'} bg-black overflow-hidden transition-all duration-500`}>
         
-        {/* STRANGER VIDEO: Always in the DOM to prevent WebRTC crashes, but hidden when waiting */}
+        {/* STRANGER VIDEO */}
         <video
           ref={remoteVideoRef}
           autoPlay
@@ -357,7 +307,7 @@ export default function ChatDashboard() {
           }`}
         />
 
-        {/* LOCAL VIDEO: Fullscreen/Blurred when waiting, shrinks to Picture-in-Picture when matched */}
+        {/* LOCAL VIDEO */}
         <video
           ref={localVideoRef}
           autoPlay
@@ -372,7 +322,7 @@ export default function ChatDashboard() {
           }`}
         />
 
-        {/* WAITING OVERLAYS: The spinning ring and status text */}
+        {/* WAITING OVERLAYS */}
         {!remoteStream && (
           <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none z-20">
             {socket ? (
@@ -386,7 +336,7 @@ export default function ChatDashboard() {
           </div>
         )}
 
-        {/* GLASS CONTROLS: Floating pill that fades in on hover/tap */}
+        {/* GLASS CONTROLS */}
         <div className="absolute bottom-8 left-1/2 -translate-x-1/2 flex items-center gap-3 p-2 rounded-full bg-black/50 backdrop-blur-xl border border-white/10 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity duration-300 z-40 shadow-2xl">
           <button
             onClick={handleToggleSearch}
@@ -412,7 +362,6 @@ export default function ChatDashboard() {
           )}
 
           {remoteStream && (
-            /* Professional FULLSCREEN Button */
             <button
               onClick={() => setIsFullscreen(!isFullscreen)}
               className="bg-white/10 hover:bg-white/20 text-white px-4 py-3 rounded-full font-bold transition-all ml-2"

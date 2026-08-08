@@ -180,12 +180,7 @@ io.on("connection", (socket) => {
   });
 });
 
-app.get("/api/turn-credentials", (req, res) => {
-  res.json({
-    username: process.env.TURN_USERNAME,
-    credential: process.env.TURN_PASSWORD
-  });
-});
+
 // Fetch all users for the dashboard
 app.get("/api/admin/users", async (req, res) => {
   try {
