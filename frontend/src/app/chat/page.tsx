@@ -37,17 +37,25 @@ export default function ChatDashboard() {
   const dataChannelRef = useRef<RTCDataChannel | null>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
   const roomIdRef = useRef<string | null>(null);
+  // Cache pre-fetched ICE config so match_found can use it synchronously
+  const iceConfigRef = useRef<RTCConfiguration>({
+    iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
+  });
   const [isFullscreen, setIsFullscreen] = useState(false);
 
   const router = useRouter();
 
-  const getIceConfig = async (): Promise<RTCConfiguration> => {
+  // Pre-fetches and caches TURN credentials BEFORE matching starts.
+  // This avoids the race condition where awaiting a fetch inside match_found
+  // delays RTCPeerConnection creation, causing the remote offer to arrive
+  // before peerConnectionRef.current is set and get silently dropped.
+  const prefetchIceConfig = async () => {
     const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:5000";
     try {
       const res = await fetch(`${backendUrl}/api/turn-credentials`);
       const turnData = await res.json();
       if (turnData.username && turnData.credential) {
-        return {
+        iceConfigRef.current = {
           iceServers: [
             { urls: "stun:stun.l.google.com:19302" },
             { urls: "stun:stun1.l.google.com:19302" },
@@ -68,17 +76,11 @@ export default function ChatDashboard() {
             },
           ],
         };
+        console.log("✅ TURN credentials pre-fetched and cached.");
       }
     } catch (err) {
-      console.warn("Could not fetch TURN credentials from backend, falling back to STUN.");
+      console.warn("⚠️ Could not fetch TURN credentials, will use STUN only.");
     }
-
-    return {
-      iceServers: [
-        { urls: "stun:stun.l.google.com:19302" },
-        { urls: "stun:stun1.l.google.com:19302" },
-      ],
-    };
   };
 
   useEffect(() => {
@@ -187,7 +189,11 @@ export default function ChatDashboard() {
         setLocalStream(stream);
         if (localVideoRef.current) localVideoRef.current.srcObject = stream;
 
-        setStatus("Camera active. Connecting to server...");
+        setStatus("Camera active. Fetching relay config...");
+        // Pre-fetch TURN credentials NOW, before the socket even connects.
+        // By the time match_found fires, credentials are already in iceConfigRef.
+        await prefetchIceConfig();
+
         const backendUrl =
           process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:5000";
         const newSocket = io(backendUrl, {
@@ -221,8 +227,8 @@ export default function ChatDashboard() {
             peerConnectionRef.current.close();
           }
 
-          const dynamicIceConfig = await getIceConfig();
-          const pc = new RTCPeerConnection(dynamicIceConfig);
+          // Use pre-cached ICE config — zero delay, no race condition
+          const pc = new RTCPeerConnection(iceConfigRef.current);
           peerConnectionRef.current = pc;
 
           stream.getTracks().forEach((track) => pc.addTrack(track, stream));
