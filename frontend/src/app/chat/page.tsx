@@ -60,7 +60,17 @@ export default function ChatDashboard() {
     try {
       const res = await fetch(`${backendUrl}/api/turn-credentials`);
       const turnData = await res.json();
-      if (turnData.username && turnData.credential) {
+      if (turnData.iceServers && Array.isArray(turnData.iceServers)) {
+        iceConfigRef.current = {
+          iceServers: [
+            { urls: "stun:stun.l.google.com:19302" },
+            { urls: "stun:stun1.l.google.com:19302" },
+            ...turnData.iceServers,
+          ],
+        };
+        console.log("✅ TURN credentials pre-fetched and cached.");
+      } else if (turnData.username && turnData.credential) {
+        // Fallback for previous format just in case
         iceConfigRef.current = {
           iceServers: [
             { urls: "stun:stun.l.google.com:19302" },
@@ -82,7 +92,7 @@ export default function ChatDashboard() {
             },
           ],
         };
-        console.log("✅ TURN credentials pre-fetched and cached.");
+        console.log("✅ TURN credentials pre-fetched and cached (legacy format).");
       }
     } catch (err) {
       console.warn("⚠️ Could not fetch TURN credentials, will use STUN only.", err);
