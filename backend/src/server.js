@@ -16,7 +16,7 @@ const io = new Server(server, {
   cors: { origin: "*", methods: ["GET", "POST"] }
 });
 
-// NEW: Active Rooms map to track who is talking to whom for blocking purposes
+// Active Rooms map to track who is talking to whom for blocking purposes
 const activeRooms = new Map(); 
 
 class Node {
@@ -190,10 +190,27 @@ io.on("connection", (socket) => {
   });
 });
 
+// OPEN RELAY TURN CREDENTIALS ENDPOINT
 app.get("/api/turn-credentials", (req, res) => {
   res.json({
-    username: process.env.TURN_USERNAME,
-    credential: process.env.TURN_PASSWORD
+    iceServers: [
+      { urls: "stun:openrelay.metered.ca:80" },
+      {
+        urls: "turn:openrelay.metered.ca:80",
+        username: "openrelayproject",
+        credential: "openrelayproject"
+      },
+      {
+        urls: "turn:openrelay.metered.ca:443",
+        username: "openrelayproject",
+        credential: "openrelayproject"
+      },
+      {
+        urls: "turn:openrelay.metered.ca:443?transport=tcp",
+        username: "openrelayproject",
+        credential: "openrelayproject"
+      }
+    ]
   });
 });
 
@@ -231,3 +248,5 @@ app.post("/api/admin/ban", adminAuth, async (req, res) => {
 
 const PORT = process.env.PORT || 5000;
 server.listen(PORT, () => console.log(`🚀 Signaling Server is running on port ${PORT}`));
+
+

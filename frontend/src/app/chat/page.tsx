@@ -13,7 +13,9 @@ function getAnonymousId(): string {
   if (typeof window === "undefined") return "anon_server";
   let userId = sessionStorage.getItem("kmegle_user_id");
   if (!userId) {
-    userId = "anon_" + crypto.randomUUID();
+    // Fallback in case crypto.randomUUID is not available (e.g., non-HTTPS local network testing)
+    const uuid = crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).substring(2, 15);
+    userId = "anon_" + uuid;
     sessionStorage.setItem("kmegle_user_id", userId);
   }
   return userId;
@@ -37,7 +39,7 @@ export default function ChatDashboard() {
   const dataChannelRef = useRef<RTCDataChannel | null>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
   const roomIdRef = useRef<string | null>(null);
-  // Cache pre-fetched ICE config so match_found can use it synchronously
+  
   const iceConfigRef = useRef<RTCConfiguration>({
     iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
   });
@@ -45,10 +47,14 @@ export default function ChatDashboard() {
 
   const router = useRouter();
 
-  // Pre-fetches and caches TURN credentials BEFORE matching starts.
-  // This avoids the race condition where awaiting a fetch inside match_found
-  // delays RTCPeerConnection creation, causing the remote offer to arrive
-  // before peerConnectionRef.current is set and get silently dropped.
+  // Handle component unmount cleanup to prevent camera/socket memory leaks
+  useEffect(() => {
+    return () => {
+      cleanupConnection();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const prefetchIceConfig = async () => {
     const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:5000";
     try {
@@ -79,7 +85,7 @@ export default function ChatDashboard() {
         console.log("✅ TURN credentials pre-fetched and cached.");
       }
     } catch (err) {
-      console.warn("⚠️ Could not fetch TURN credentials, will use STUN only.");
+      console.warn("⚠️ Could not fetch TURN credentials, will use STUN only.", err);
     }
   };
 
@@ -96,8 +102,11 @@ export default function ChatDashboard() {
       peerConnectionRef.current.close();
       peerConnectionRef.current = null;
     }
+    // Correctly stop all camera/mic tracks
     if (localStream) {
-      localStream.getTracks().forEach((track) => track.stop());
+      localStream.getTracks().forEach((track) => {
+        track.stop();
+      });
     }
 
     setSocket(null);
@@ -190,8 +199,6 @@ export default function ChatDashboard() {
         if (localVideoRef.current) localVideoRef.current.srcObject = stream;
 
         setStatus("Camera active. Fetching relay config...");
-        // Pre-fetch TURN credentials NOW, before the socket even connects.
-        // By the time match_found fires, credentials are already in iceConfigRef.
         await prefetchIceConfig();
 
         const backendUrl =
@@ -227,7 +234,6 @@ export default function ChatDashboard() {
             peerConnectionRef.current.close();
           }
 
-          // Use pre-cached ICE config — zero delay, no race condition
           const pc = new RTCPeerConnection(iceConfigRef.current);
           peerConnectionRef.current = pc;
 
@@ -278,7 +284,9 @@ export default function ChatDashboard() {
             for (const candidate of pendingCandidates.current) {
               try {
                 await pc.addIceCandidate(new RTCIceCandidate(candidate));
-              } catch (e) {}
+              } catch (e) {
+                console.warn("Failed to add buffered ICE candidate after offer:", e);
+              }
             }
             pendingCandidates.current = [];
           } catch (e) {
@@ -296,7 +304,9 @@ export default function ChatDashboard() {
             for (const candidate of pendingCandidates.current) {
               try {
                 await pc.addIceCandidate(new RTCIceCandidate(candidate));
-              } catch (e) {}
+              } catch (e) {
+                console.warn("Failed to add buffered ICE candidate after answer:", e);
+              }
             }
             pendingCandidates.current = [];
           } catch (err) {
@@ -311,7 +321,9 @@ export default function ChatDashboard() {
           if (pc.remoteDescription) {
             try {
               await pc.addIceCandidate(new RTCIceCandidate(candidate));
-            } catch (e) {}
+            } catch (e) {
+              console.warn("Failed to add ICE candidate:", e);
+            }
           } else {
             pendingCandidates.current.push(candidate);
           }
@@ -333,6 +345,7 @@ export default function ChatDashboard() {
           dataChannelRef.current = null;
         });
       } catch (error) {
+        console.error("Media error:", error);
         setStatus("Error: Camera and Microphone permissions are required.");
       }
     }
@@ -407,7 +420,7 @@ export default function ChatDashboard() {
           </div>
         )}
 
-        {/* FLOATING CONTROLS - ALWAYS VISIBLE (OPACITY-100 FOR TABLET & TOUCH ACCESS) */}
+        {/* FLOATING CONTROLS - ALWAYS VISIBLE */}
         <div className="absolute bottom-6 left-1/2 -translate-x-1/2 flex items-center gap-2 md:gap-3 p-2 rounded-full bg-black/70 backdrop-blur-xl border border-white/15 opacity-100 z-40 shadow-2xl max-w-[95vw] overflow-x-auto">
           <button
             onClick={handleToggleSearch}
