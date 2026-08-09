@@ -1,44 +1,62 @@
 "use client";
-import { useEffect, useState } from "react";
+
+import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 
+// Added a User interface to replace any[]
+interface User {
+  id: string;
+  created_at: string;
+  is_banned: boolean;
+}
+
 export default function AdminDashboard() {
-  const [users, setUsers] = useState<any[]>([]);
+  const [users, setUsers] = useState<User[]>([]);
   const [adminKey, setAdminKey] = useState<string>("");
   const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [isLoading, setIsLoading] = useState(true); // Added loading state
   const [error, setError] = useState<string | null>(null);
   const [inputKey, setInputKey] = useState("");
   const router = useRouter();
 
-  useEffect(() => {
-    const savedKey = localStorage.getItem("kmegle_admin_key");
-    if (savedKey) {
-      setAdminKey(savedKey);
-      fetchUsers(savedKey);
-    }
-  }, []);
-
-  const fetchUsers = async (key: string) => {
+  // Wrapped in useCallback to safely include in useEffect dependency array
+  const fetchUsers = useCallback(async (key: string) => {
+    setIsLoading(true);
     const backendUrl =
       process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:5000";
     try {
       const res = await fetch(`${backendUrl}/api/admin/users`, {
         headers: { "x-admin-key": key },
       });
+      
       if (res.status === 401) {
         setIsAuthenticated(false);
         setError("Invalid Admin Key. Access Denied.");
         localStorage.removeItem("kmegle_admin_key");
+        setIsLoading(false);
         return;
       }
+      
       const data = await res.json();
       setUsers(data);
       setIsAuthenticated(true);
       setError(null);
     } catch (err) {
       setError("Failed to connect to backend server.");
+    } finally {
+      setIsLoading(false);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    const savedKey = localStorage.getItem("kmegle_admin_key");
+    if (savedKey) {
+      setAdminKey(savedKey);
+      fetchUsers(savedKey);
+    } else {
+      setIsLoading(false);
+    }
+  }, [fetchUsers]);
 
   const handleLogin = (e: React.FormEvent) => {
     e.preventDefault();
@@ -60,13 +78,25 @@ export default function AdminDashboard() {
         },
         body: JSON.stringify({ userId, banStatus: !currentStatus }),
       });
+      
       if (res.ok) {
         fetchUsers(adminKey);
+      } else {
+        alert("Failed to update user status. Please try again.");
       }
     } catch (err) {
       console.error("Ban toggle error:", err);
+      alert("Network error while trying to update user status.");
     }
   };
+
+  if (isLoading && !isAuthenticated) {
+    return (
+      <div className="min-h-screen bg-[#0a0a0f] flex justify-center items-center">
+        <div className="w-12 h-12 border-4 border-indigo-500/30 border-t-indigo-500 rounded-full animate-spin"></div>
+      </div>
+    );
+  }
 
   if (!isAuthenticated) {
     return (
@@ -172,7 +202,13 @@ export default function AdminDashboard() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-white/5">
-                {users.length === 0 ? (
+                {isLoading ? (
+                  <tr>
+                    <td colSpan={4} className="p-12 text-center text-gray-500 text-sm font-mono">
+                      Loading users...
+                    </td>
+                  </tr>
+                ) : users.length === 0 ? (
                   <tr>
                     <td colSpan={4} className="p-12 text-center text-gray-500 text-sm font-mono">
                       No tracked users yet.
