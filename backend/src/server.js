@@ -190,27 +190,40 @@ io.on("connection", (socket) => {
   });
 });
 
-// OPEN RELAY TURN CREDENTIALS ENDPOINT
+// OWN METERED.CA TURN CREDENTIALS ENDPOINT
 app.get("/api/turn-credentials", (req, res) => {
+  const username = process.env.TURN_USERNAME;
+  const credential = process.env.TURN_PASSWORD;
+
+  if (!username || !credential) {
+    console.error("⚠️ TURN_USERNAME / TURN_PASSWORD not set in env");
+    return res.status(500).json({ error: "TURN credentials not configured" });
+  }
+
   res.json({
     iceServers: [
-      { urls: "stun:openrelay.metered.ca:80" },
+      { urls: "stun:stun.relay.metered.ca:80" },
       {
-        urls: "turn:openrelay.metered.ca:80",
-        username: "openrelayproject",
-        credential: "openrelayproject"
+        urls: "turn:relay.metered.ca:80",
+        username,
+        credential,
       },
       {
-        urls: "turn:openrelay.metered.ca:443",
-        username: "openrelayproject",
-        credential: "openrelayproject"
+        urls: "turn:relay.metered.ca:80?transport=tcp",
+        username,
+        credential,
       },
       {
-        urls: "turn:openrelay.metered.ca:443?transport=tcp",
-        username: "openrelayproject",
-        credential: "openrelayproject"
-      }
-    ]
+        urls: "turn:relay.metered.ca:443",
+        username,
+        credential,
+      },
+      {
+        urls: "turns:relay.metered.ca:443?transport=tcp",
+        username,
+        credential,
+      },
+    ],
   });
 });
 
