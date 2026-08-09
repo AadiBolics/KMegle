@@ -190,41 +190,36 @@ io.on("connection", (socket) => {
   });
 });
 
-// OWN METERED.CA TURN CREDENTIALS ENDPOINT
-app.get("/api/turn-credentials", (req, res) => {
-  const username = process.env.TURN_USERNAME;
-  const credential = process.env.TURN_PASSWORD;
+// METERED.CA TURN CREDENTIALS ENDPOINT
+// Fetches fresh, time-limited credentials from the Metered API.
+// Static credentials expire and won't work on restricted networks (e.g., college WiFi)
+// that require TURN relay — hence the black screen issue.
+app.get("/api/turn-credentials", async (req, res) => {
+  const apiKey = process.env.TURN_API_KEY;
 
-  if (!username || !credential) {
-    console.error("⚠️ TURN_USERNAME / TURN_PASSWORD not set in env");
+  if (!apiKey) {
+    console.error("⚠️ TURN_API_KEY not set in env");
     return res.status(500).json({ error: "TURN credentials not configured" });
   }
 
-  res.json({
-    iceServers: [
-      { urls: "stun:stun.relay.metered.ca:80" },
-      {
-        urls: "turn:relay.metered.ca:80",
-        username,
-        credential,
-      },
-      {
-        urls: "turn:relay.metered.ca:80?transport=tcp",
-        username,
-        credential,
-      },
-      {
-        urls: "turn:relay.metered.ca:443",
-        username,
-        credential,
-      },
-      {
-        urls: "turns:relay.metered.ca:443?transport=tcp",
-        username,
-        credential,
-      },
-    ],
-  });
+  try {
+    const response = await fetch(
+      `https://${process.env.METERED_APP_NAME}.metered.live/api/v1/turn/credentials?apiKey=${apiKey}`
+    );
+
+    if (!response.ok) {
+      const body = await response.text();
+      console.error(`⚠️ Metered API error ${response.status}:`, body);
+      return res.status(502).json({ error: "Failed to fetch TURN credentials from Metered" });
+    }
+
+    const iceServers = await response.json();
+    console.log("✅ Fresh TURN credentials fetched from Metered.");
+    res.json({ iceServers });
+  } catch (err) {
+    console.error("⚠️ Error contacting Metered TURN API:", err);
+    res.status(502).json({ error: "Could not reach TURN credential service" });
+  }
 });
 
 // Admin Protection Middleware
