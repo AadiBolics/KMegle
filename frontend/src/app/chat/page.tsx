@@ -47,13 +47,11 @@ export default function ChatDashboard() {
   const iceConfigRef = useRef<RTCConfiguration>({
     iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
   });
-  
-  // New UI States
   const [isFullscreen, setIsFullscreen] = useState(false);
-  const [isDarkMode, setIsDarkMode] = useState(true);
 
   const router = useRouter();
 
+  // Keep refs in sync with state for lifecycle cleanups
   useEffect(() => {
     socketRef.current = socket;
   }, [socket]);
@@ -62,12 +60,14 @@ export default function ChatDashboard() {
     localStreamRef.current = localStream;
   }, [localStream]);
 
+  // Synchronize local video stream with video DOM element
   useEffect(() => {
     if (localVideoRef.current && localStream) {
       localVideoRef.current.srcObject = localStream;
     }
   }, [localStream]);
 
+  // Synchronize remote video stream with video DOM element & trigger autoplay
   useEffect(() => {
     if (remoteVideoRef.current) {
       remoteVideoRef.current.srcObject = remoteStream;
@@ -79,6 +79,7 @@ export default function ChatDashboard() {
     }
   }, [remoteStream]);
 
+  // Auto-scroll chat window
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
@@ -97,6 +98,7 @@ export default function ChatDashboard() {
       peerConnectionRef.current = null;
     }
 
+    // Clean up hardware camera/microphone tracks
     if (localStreamRef.current) {
       localStreamRef.current.getTracks().forEach((track) => track.stop());
     }
@@ -117,6 +119,7 @@ export default function ChatDashboard() {
     pendingCandidates.current = [];
   }, []);
 
+  // Component unmount cleanup
   useEffect(() => {
     return () => {
       cleanupConnection();
@@ -408,55 +411,27 @@ export default function ChatDashboard() {
   };
 
   return (
-    <div
-      className={`h-[100dvh] w-full flex flex-col lg:flex-row overflow-hidden font-sans transition-colors duration-300 ${
-        isDarkMode ? "bg-[#0a0a0f] text-white" : "bg-gray-50 text-gray-900"
-      }`}
-    >
+    <div className="h-screen w-full bg-[#0a0a0f] text-white flex flex-col md:flex-row overflow-hidden font-sans">
       {!isFullscreen && (
-        <header className="absolute top-0 left-0 w-full p-4 lg:p-6 flex justify-between items-center z-40 bg-gradient-to-b from-black/60 to-transparent pointer-events-none">
+        <header className="absolute top-0 left-0 w-full p-4 md:p-6 flex justify-between items-center z-40 bg-gradient-to-b from-black/80 to-transparent pointer-events-none">
           <h1 className="text-2xl font-black text-white tracking-tighter drop-shadow-md pointer-events-auto">
             KMegle<span className="text-indigo-500">.</span>
           </h1>
-          <div className="flex items-center gap-3 pointer-events-auto">
-            {/* Theme Toggle Button */}
-            <button
-              onClick={() => setIsDarkMode(!isDarkMode)}
-              className="bg-black/30 hover:bg-black/50 backdrop-blur-md border border-white/20 p-2 rounded-full text-white transition-all shadow-lg"
-              title="Toggle Theme"
-            >
-              {isDarkMode ? (
-                // Sun Icon for switching to Light Mode
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z" />
-                </svg>
-              ) : (
-                // Moon Icon for switching to Dark Mode
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" />
-                </svg>
-              )}
-            </button>
-            <button
-              onClick={handleExit}
-              className="bg-black/30 hover:bg-black/50 backdrop-blur-md border border-white/20 px-5 py-2 rounded-full text-sm font-semibold text-white transition-all shadow-lg"
-            >
-              Exit
-            </button>
-          </div>
+          <button
+            onClick={handleExit}
+            className="bg-white/10 hover:bg-white/20 backdrop-blur-md border border-white/10 px-5 py-2 rounded-full text-sm font-semibold transition-all pointer-events-auto shadow-lg"
+          >
+            Exit
+          </button>
         </header>
       )}
 
       {/* LEFT SIDE: Video Viewport */}
-      {/* 
-        On mobile/tablet portrait (< lg), we give video a fixed portion of the height (e.g., h-[55dvh] or h-[60dvh]).
-        On laptops (lg), it takes full height and 70% width.
-      */}
       <div
-        className={`relative group flex-shrink-0 lg:flex-shrink ${
+        className={`relative group flex-grow ${
           isFullscreen
             ? "absolute inset-0 z-50"
-            : "w-full lg:w-[70%] h-[55dvh] lg:h-full"
+            : "w-full md:w-[70%] h-[55vh] md:h-full"
         } bg-black overflow-hidden transition-all duration-500`}
       >
         {/* STRANGER VIDEO */}
@@ -477,7 +452,7 @@ export default function ChatDashboard() {
           muted
           className={`object-cover transform scale-x-[-1] transition-all duration-700 ease-in-out ${
             remoteStream
-              ? "absolute top-4 right-4 lg:top-6 lg:right-6 w-24 lg:w-40 aspect-[3/4] rounded-2xl shadow-2xl border border-white/20 z-30 bg-black"
+              ? "absolute top-4 right-4 md:top-6 md:right-6 w-28 md:w-40 aspect-[3/4] rounded-2xl shadow-2xl border border-white/20 z-30 bg-black"
               : `absolute inset-0 w-full h-full ${
                   socket
                     ? "blur-2xl brightness-50 scale-110 z-0"
@@ -491,13 +466,13 @@ export default function ChatDashboard() {
           <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none z-20 px-4 text-center">
             {socket ? (
               <>
-                <div className="w-12 h-12 lg:w-16 lg:h-16 border-4 border-indigo-500/30 border-t-indigo-500 rounded-full animate-spin mb-4 lg:mb-6 shadow-[0_0_30px_rgba(99,102,241,0.5)]"></div>
-                <p className="text-indigo-200 font-medium tracking-wide animate-pulse text-xs lg:text-base">
+                <div className="w-14 h-14 md:w-16 md:h-16 border-4 border-indigo-500/30 border-t-indigo-500 rounded-full animate-spin mb-6 shadow-[0_0_30px_rgba(99,102,241,0.5)]"></div>
+                <p className="text-indigo-200 font-medium tracking-wide animate-pulse text-sm md:text-base">
                   {status}
                 </p>
               </>
             ) : (
-              <p className="text-gray-300 font-medium tracking-wide text-sm lg:text-base drop-shadow-md">
+              <p className="text-gray-400 font-medium tracking-wide text-sm md:text-base">
                 Click Start to begin matching.
               </p>
             )}
@@ -505,10 +480,10 @@ export default function ChatDashboard() {
         )}
 
         {/* FLOATING CONTROLS */}
-        <div className="absolute bottom-4 lg:bottom-6 left-1/2 -translate-x-1/2 flex items-center gap-2 lg:gap-3 p-2 rounded-full bg-black/70 backdrop-blur-xl border border-white/15 opacity-100 z-40 shadow-2xl max-w-[95vw] overflow-x-auto">
+        <div className="absolute bottom-6 left-1/2 -translate-x-1/2 flex items-center gap-2 md:gap-3 p-2 rounded-full bg-black/70 backdrop-blur-xl border border-white/15 opacity-100 z-40 shadow-2xl max-w-[95vw] overflow-x-auto">
           <button
             onClick={handleToggleSearch}
-            className={`px-5 lg:px-8 py-2.5 lg:py-3 rounded-full font-bold text-xs lg:text-sm transition-all whitespace-nowrap ${
+            className={`px-6 md:px-8 py-2.5 md:py-3 rounded-full font-bold text-xs md:text-sm transition-all whitespace-nowrap ${
               socket
                 ? "bg-red-500/20 hover:bg-red-500/30 text-red-300 border border-red-500/30"
                 : "bg-indigo-600 hover:bg-indigo-500 text-white shadow-[0_0_20px_rgba(99,102,241,0.4)]"
@@ -520,11 +495,21 @@ export default function ChatDashboard() {
           {socket && (
             <button
               onClick={handleNext}
-              className="bg-white/15 hover:bg-white/25 text-white px-4 lg:px-6 py-2.5 lg:py-3 rounded-full font-bold text-xs lg:text-sm transition-all flex items-center gap-1.5 whitespace-nowrap"
+              className="bg-white/15 hover:bg-white/25 text-white px-5 md:px-6 py-2.5 md:py-3 rounded-full font-bold text-xs md:text-sm transition-all flex items-center gap-1.5 whitespace-nowrap"
             >
               Next
-              <svg className="w-4 h-4 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M13 5l7 7-7 7M5 5l7 7-7 7" />
+              <svg
+                className="w-4 h-4 text-indigo-400"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2.5}
+                  d="M13 5l7 7-7 7M5 5l7 7-7 7"
+                />
               </svg>
             </button>
           )}
@@ -533,7 +518,7 @@ export default function ChatDashboard() {
             <>
               <button
                 onClick={handleBlock}
-                className="bg-red-500/20 hover:bg-red-500/40 text-red-300 px-3.5 lg:px-4 py-2.5 lg:py-3 rounded-full font-bold text-xs lg:text-sm transition-all border border-red-500/30 whitespace-nowrap"
+                className="bg-red-500/20 hover:bg-red-500/40 text-red-300 px-4 py-2.5 md:py-3 rounded-full font-bold text-xs md:text-sm transition-all border border-red-500/30 whitespace-nowrap"
                 title="Block User"
               >
                 Block
@@ -541,16 +526,36 @@ export default function ChatDashboard() {
 
               <button
                 onClick={() => setIsFullscreen(!isFullscreen)}
-                className="bg-white/15 hover:bg-white/25 text-white px-3.5 py-2.5 lg:py-3 rounded-full font-bold transition-all hidden md:block"
+                className="bg-white/15 hover:bg-white/25 text-white px-3.5 py-2.5 md:py-3 rounded-full font-bold transition-all"
                 title="Toggle Fullscreen"
               >
                 {isFullscreen ? (
-                  <svg className="w-4 h-4 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 14h6m0 0v6m0-6l-7 7m17-11h-6m0 0V4m0 6l7-7m-7 17v-6m0 0h6m-6 0l7 7M4 10h6m0 0V4m0 6l-7-7" />
+                  <svg
+                    className="w-4 h-4 text-gray-300"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M4 14h6m0 0v6m0-6l-7 7m17-11h-6m0 0V4m0 6l7-7m-7 17v-6m0 0h6m-6 0l7 7M4 10h6m0 0V4m0 6l-7-7"
+                    />
                   </svg>
                 ) : (
-                  <svg className="w-4 h-4 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" />
+                  <svg
+                    className="w-4 h-4 text-gray-300"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4"
+                    />
                   </svg>
                 )}
               </button>
@@ -563,25 +568,13 @@ export default function ChatDashboard() {
       <div
         className={`${
           isFullscreen
-            ? "absolute bottom-20 right-4 w-80 h-96 z-50 bg-black/80 backdrop-blur-xl rounded-2xl border border-white/10"
-            : `flex-1 lg:w-[30%] lg:h-full flex flex-col transition-colors duration-300 ${
-                isDarkMode
-                  ? "bg-[#13141a] border-t lg:border-t-0 lg:border-l border-white/5"
-                  : "bg-white border-t lg:border-t-0 lg:border-l border-gray-200"
-              }`
-        }`}
+            ? "absolute bottom-20 right-4 w-80 h-96 z-50 bg-black/60 backdrop-blur-xl rounded-2xl border border-white/10"
+            : "w-full md:w-[30%] h-[45vh] md:h-full bg-[#13141a] border-t md:border-t-0 md:border-l border-white/5"
+        } flex flex-col transition-all duration-500`}
       >
         {!isFullscreen && (
-          <div
-            className={`p-3 lg:p-4 border-b flex justify-between items-center shadow-sm z-10 ${
-              isDarkMode ? "bg-[#13141a] border-white/5" : "bg-white border-gray-100"
-            }`}
-          >
-            <h2
-              className={`text-xs lg:text-sm font-bold tracking-wide uppercase ${
-                isDarkMode ? "text-gray-300" : "text-gray-700"
-              }`}
-            >
+          <div className="p-4 border-b border-white/5 bg-[#13141a] flex justify-between items-center shadow-sm z-10">
+            <h2 className="text-sm font-bold text-gray-300 tracking-wide uppercase">
               Live Chat
             </h2>
             <span className="flex h-2 w-2 relative">
@@ -591,13 +584,9 @@ export default function ChatDashboard() {
           </div>
         )}
 
-        <div className="flex-grow p-3 lg:p-4 overflow-y-auto flex flex-col gap-3 lg:gap-4 scrollbar-hide">
+        <div className="flex-grow p-4 overflow-y-auto flex flex-col gap-4 scrollbar-hide">
           {messages.length === 0 && !isFullscreen && (
-            <div
-              className={`text-center mt-auto mb-auto font-mono text-xs ${
-                isDarkMode ? "text-gray-500" : "text-gray-400"
-              }`}
-            >
+            <div className="text-center text-gray-500 mt-auto mb-auto font-mono text-xs">
               Press Start to connect with strangers.
             </div>
           )}
@@ -613,29 +602,17 @@ export default function ChatDashboard() {
               }`}
             >
               {msg.sender === "stranger" && !isFullscreen && (
-                <span
-                  className={`text-[9px] lg:text-[10px] ml-2 mb-1 uppercase tracking-wider font-bold ${
-                    isDarkMode ? "text-gray-500" : "text-gray-400"
-                  }`}
-                >
+                <span className="text-[10px] text-gray-500 ml-2 mb-1 uppercase tracking-wider font-bold">
                   Stranger
                 </span>
               )}
               <span
-                className={`px-3 lg:px-4 py-2 lg:py-2.5 max-w-[85%] text-xs lg:text-sm shadow-sm leading-relaxed ${
+                className={`px-4 py-2.5 max-w-[85%] text-sm shadow-sm leading-relaxed ${
                   msg.sender === "me"
                     ? "bg-indigo-600 text-white rounded-2xl rounded-br-sm"
                     : msg.sender === "system"
-                    ? `text-[10px] lg:text-xs font-mono rounded-full px-3 lg:px-4 border text-center ${
-                        isDarkMode
-                          ? "bg-white/5 text-gray-400 border-white/5"
-                          : "bg-gray-100 text-gray-500 border-gray-200"
-                      }`
-                    : `rounded-2xl rounded-bl-sm border ${
-                        isDarkMode
-                          ? "bg-white/10 text-white border-white/5"
-                          : "bg-gray-100 text-gray-800 border-gray-200"
-                      }`
+                    ? "bg-white/5 text-gray-400 text-xs font-mono rounded-full px-4 border border-white/5 text-center"
+                    : "bg-white/10 text-white rounded-2xl rounded-bl-sm border border-white/5"
                 }`}
               >
                 {msg.text}
@@ -647,41 +624,42 @@ export default function ChatDashboard() {
 
         <form
           onSubmit={handleSendMessage}
-          className={`p-3 lg:p-4 ${
+          className={`p-4 ${
             isFullscreen
               ? "bg-transparent"
-              : isDarkMode
-              ? "bg-[#13141a] border-t border-white/5"
-              : "bg-white border-t border-gray-100"
+              : "bg-[#13141a] border-t border-white/5"
           }`}
         >
-          <div className="relative flex items-center shadow-sm rounded-full">
+          <div className="relative flex items-center shadow-lg rounded-full">
             <input
               type="text"
               value={chatInput}
               onChange={(e) => setChatInput(e.target.value)}
               placeholder={remoteStream ? "Type a message..." : "Waiting..."}
               disabled={!remoteStream}
-              className={`w-full rounded-full pl-4 lg:pl-5 pr-11 lg:pr-12 py-3 lg:py-3.5 text-xs lg:text-sm focus:outline-none focus:border-indigo-500/70 focus:ring-1 focus:ring-indigo-500/70 disabled:opacity-50 transition-all ${
+              className={`w-full ${
                 isFullscreen
-                  ? "bg-black/40 backdrop-blur-xl border border-white/20 text-white placeholder-gray-300"
-                  : isDarkMode
-                  ? "bg-[#1e2028] border-transparent text-white placeholder-gray-500"
-                  : "bg-gray-100 border-gray-200 text-gray-900 placeholder-gray-500"
-              }`}
+                  ? "bg-black/40 backdrop-blur-xl border border-white/20 placeholder-gray-300"
+                  : "bg-[#1e2028] border border-transparent placeholder-gray-500"
+              } rounded-full pl-5 pr-12 py-3.5 text-sm text-white focus:outline-none focus:border-indigo-500/70 focus:ring-1 focus:ring-indigo-500/70 disabled:opacity-50 transition-all`}
             />
             <button
               type="submit"
               disabled={!remoteStream || !chatInput.trim()}
-              className="absolute right-1 w-8 h-8 lg:w-10 lg:h-10 flex items-center justify-center bg-indigo-600 hover:bg-indigo-500 rounded-full disabled:opacity-50 transition-all"
+              className="absolute right-1.5 w-10 h-10 flex items-center justify-center bg-indigo-600 hover:bg-indigo-500 rounded-full disabled:opacity-50 transition-all"
             >
               <svg
-                className="w-3 h-3 lg:w-4 lg:h-4 text-white ml-0.5"
+                className="w-4 h-4 text-white ml-0.5"
                 fill="none"
                 stroke="currentColor"
                 viewBox="0 0 24 24"
               >
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2.5}
+                  d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"
+                />
               </svg>
             </button>
           </div>
