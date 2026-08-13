@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef, FormEvent, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { io, Socket } from "socket.io-client";
 
@@ -13,8 +13,9 @@ function getAnonymousId(): string {
   if (typeof window === "undefined") return "anon_server";
   let userId = sessionStorage.getItem("kmegle_user_id");
   if (!userId) {
-    // Fallback in case crypto.randomUUID is not available (e.g., non-HTTPS local network testing)
-    const uuid = crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).substring(2, 15);
+    const uuid = crypto.randomUUID
+      ? crypto.randomUUID()
+      : Math.random().toString(36).substring(2, 15);
     userId = "anon_" + uuid;
     sessionStorage.setItem("kmegle_user_id", userId);
   }
@@ -23,10 +24,13 @@ function getAnonymousId(): string {
 
 export default function ChatDashboard() {
   const [socket, setSocket] = useState<Socket | null>(null);
+  const socketRef = useRef<Socket | null>(null);
+
   const [status, setStatus] = useState<string>("Ready to connect.");
   const [roomId, setRoomId] = useState<string | null>(null);
 
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
+  const localStreamRef = useRef<MediaStream | null>(null);
   const localVideoRef = useRef<HTMLVideoElement>(null);
 
   const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
@@ -39,7 +43,7 @@ export default function ChatDashboard() {
   const dataChannelRef = useRef<RTCDataChannel | null>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
   const roomIdRef = useRef<string | null>(null);
-  
+
   const iceConfigRef = useRef<RTCConfiguration>({
     iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
   });
@@ -47,13 +51,80 @@ export default function ChatDashboard() {
 
   const router = useRouter();
 
-  // Handle component unmount cleanup to prevent camera/socket memory leaks
+  // Keep refs in sync with state for lifecycle cleanups
+  useEffect(() => {
+    socketRef.current = socket;
+  }, [socket]);
+
+  useEffect(() => {
+    localStreamRef.current = localStream;
+  }, [localStream]);
+
+  // Synchronize local video stream with video DOM element
+  useEffect(() => {
+    if (localVideoRef.current && localStream) {
+      localVideoRef.current.srcObject = localStream;
+    }
+  }, [localStream]);
+
+  // Synchronize remote video stream with video DOM element & trigger autoplay
+  useEffect(() => {
+    if (remoteVideoRef.current) {
+      remoteVideoRef.current.srcObject = remoteStream;
+      if (remoteStream) {
+        remoteVideoRef.current.play().catch((err) =>
+          console.warn("Remote video play prevented by browser policy:", err)
+        );
+      }
+    }
+  }, [remoteStream]);
+
+  // Auto-scroll chat window
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages]);
+
+  const cleanupConnection = useCallback(() => {
+    const currentSocket = socketRef.current;
+    if (currentSocket) {
+      if (roomIdRef.current) {
+        currentSocket.emit("leave_room", { roomId: roomIdRef.current });
+      }
+      currentSocket.disconnect();
+    }
+
+    if (peerConnectionRef.current) {
+      peerConnectionRef.current.close();
+      peerConnectionRef.current = null;
+    }
+
+    // Clean up hardware camera/microphone tracks
+    if (localStreamRef.current) {
+      localStreamRef.current.getTracks().forEach((track) => track.stop());
+    }
+
+    if (remoteVideoRef.current) {
+      remoteVideoRef.current.srcObject = null;
+    }
+
+    setSocket(null);
+    socketRef.current = null;
+    setLocalStream(null);
+    localStreamRef.current = null;
+    setRemoteStream(null);
+    setRoomId(null);
+    roomIdRef.current = null;
+    dataChannelRef.current = null;
+    setMessages([]);
+    pendingCandidates.current = [];
+  }, []);
+
+  // Component unmount cleanup
   useEffect(() => {
     return () => {
       cleanupConnection();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [cleanupConnection]);
 
   const prefetchIceConfig = async () => {
     const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:5000";
@@ -68,9 +139,7 @@ export default function ChatDashboard() {
             ...turnData.iceServers,
           ],
         };
-        console.log("✅ TURN credentials pre-fetched and cached.");
       } else if (turnData.username && turnData.credential) {
-        // Fallback for previous format just in case
         iceConfigRef.current = {
           iceServers: [
             { urls: "stun:stun.l.google.com:19302" },
@@ -92,41 +161,10 @@ export default function ChatDashboard() {
             },
           ],
         };
-        console.log("✅ TURN credentials pre-fetched and cached (legacy format).");
       }
     } catch (err) {
-      console.warn("⚠️ Could not fetch TURN credentials, will use STUN only.", err);
+      console.warn("⚠️ Could not fetch TURN credentials, falling back to STUN only.", err);
     }
-  };
-
-  useEffect(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
-
-  const cleanupConnection = () => {
-    if (socket) {
-      if (roomIdRef.current) socket.emit("leave_room", { roomId: roomIdRef.current });
-      socket.disconnect();
-    }
-    if (peerConnectionRef.current) {
-      peerConnectionRef.current.close();
-      peerConnectionRef.current = null;
-    }
-    // Correctly stop all camera/mic tracks
-    if (localStream) {
-      localStream.getTracks().forEach((track) => {
-        track.stop();
-      });
-    }
-
-    setSocket(null);
-    setLocalStream(null);
-    setRemoteStream(null);
-    setRoomId(null);
-    roomIdRef.current = null;
-    dataChannelRef.current = null;
-    setMessages([]);
-    pendingCandidates.current = [];
   };
 
   const resetForNextMatch = () => {
@@ -134,8 +172,14 @@ export default function ChatDashboard() {
       peerConnectionRef.current.close();
       peerConnectionRef.current = null;
     }
-    if (socket && roomIdRef.current) {
-      socket.emit("leave_room", { roomId: roomIdRef.current });
+
+    const currentSocket = socketRef.current || socket;
+    if (currentSocket && roomIdRef.current) {
+      currentSocket.emit("leave_room", { roomId: roomIdRef.current });
+    }
+
+    if (remoteVideoRef.current) {
+      remoteVideoRef.current.srcObject = null;
     }
 
     setRemoteStream(null);
@@ -153,23 +197,21 @@ export default function ChatDashboard() {
 
   const setupDataChannel = (channel: RTCDataChannel) => {
     dataChannelRef.current = channel;
-    channel.onopen = () => console.log("Data channel open!");
+    channel.onopen = () => console.log("Data channel opened successfully.");
     channel.onmessage = (event) => {
-      setMessages((prev) => [
-        ...prev,
-        { sender: "stranger", text: event.data },
-      ]);
+      setMessages((prev) => [...prev, { sender: "stranger", text: event.data }]);
     };
   };
 
-  const handleSendMessage = (e: React.FormEvent) => {
+  const handleSendMessage = (e: FormEvent) => {
     e.preventDefault();
     if (
       !chatInput.trim() ||
       !dataChannelRef.current ||
       dataChannelRef.current.readyState !== "open"
-    )
+    ) {
       return;
+    }
 
     dataChannelRef.current.send(chatInput);
     setMessages((prev) => [...prev, { sender: "me", text: chatInput }]);
@@ -177,23 +219,26 @@ export default function ChatDashboard() {
   };
 
   const handleNext = () => {
-    if (!socket) return;
+    const activeSocket = socketRef.current || socket;
+    if (!activeSocket) return;
     resetForNextMatch();
     setStatus("Skipped. Entering the waiting pool...");
-    socket.emit("find_match", { userId: getAnonymousId() });
+    activeSocket.emit("find_match", { userId: getAnonymousId() });
   };
 
   const handleBlock = () => {
-    if (!socket || !roomIdRef.current) return;
-    socket.emit("block_user", { roomId: roomIdRef.current });
+    const activeSocket = socketRef.current || socket;
+    if (!activeSocket || !roomIdRef.current) return;
+    activeSocket.emit("block_user", { roomId: roomIdRef.current });
     resetForNextMatch();
     setStatus("User blocked. Finding someone new...");
-    socket.emit("find_match", { userId: getAnonymousId() });
+    activeSocket.emit("find_match", { userId: getAnonymousId() });
   };
 
   const handleToggleSearch = async () => {
-    if (socket) {
-      socket.emit("stop_search");
+    if (socket || socketRef.current) {
+      const activeSocket = socketRef.current || socket;
+      activeSocket?.emit("stop_search");
       cleanupConnection();
       setStatus("Disconnected. Ready to search.");
     } else {
@@ -206,17 +251,18 @@ export default function ChatDashboard() {
           audio: true,
         });
         setLocalStream(stream);
-        if (localVideoRef.current) localVideoRef.current.srcObject = stream;
+        localStreamRef.current = stream;
 
         setStatus("Camera active. Fetching relay config...");
         await prefetchIceConfig();
 
-        const backendUrl =
-          process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:5000";
+        const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:5000";
         const newSocket = io(backendUrl, {
           transports: ["websocket"],
         });
+
         setSocket(newSocket);
+        socketRef.current = newSocket;
 
         newSocket.on("connect", () => {
           setStatus("Connected! Entering waiting pool...");
@@ -247,12 +293,12 @@ export default function ChatDashboard() {
           const pc = new RTCPeerConnection(iceConfigRef.current);
           peerConnectionRef.current = pc;
 
-          stream.getTracks().forEach((track) => pc.addTrack(track, stream));
+          const currentLocalStream = localStreamRef.current || stream;
+          currentLocalStream.getTracks().forEach((track) => pc.addTrack(track, currentLocalStream));
 
           pc.ontrack = (event) => {
-            setRemoteStream(event.streams[0]);
-            if (remoteVideoRef.current) {
-              remoteVideoRef.current.srcObject = event.streams[0];
+            if (event.streams && event.streams[0]) {
+              setRemoteStream(event.streams[0]);
             }
           };
 
@@ -349,6 +395,9 @@ export default function ChatDashboard() {
             peerConnectionRef.current.close();
             peerConnectionRef.current = null;
           }
+          if (remoteVideoRef.current) {
+            remoteVideoRef.current.srcObject = null;
+          }
           setRemoteStream(null);
           setRoomId(null);
           roomIdRef.current = null;
@@ -430,7 +479,7 @@ export default function ChatDashboard() {
           </div>
         )}
 
-        {/* FLOATING CONTROLS - ALWAYS VISIBLE */}
+        {/* FLOATING CONTROLS */}
         <div className="absolute bottom-6 left-1/2 -translate-x-1/2 flex items-center gap-2 md:gap-3 p-2 rounded-full bg-black/70 backdrop-blur-xl border border-white/15 opacity-100 z-40 shadow-2xl max-w-[95vw] overflow-x-auto">
           <button
             onClick={handleToggleSearch}

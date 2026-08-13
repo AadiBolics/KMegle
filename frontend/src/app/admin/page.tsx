@@ -1,9 +1,8 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, FormEvent } from "react";
 import { useRouter } from "next/navigation";
 
-// Added a User interface to replace any[]
 interface User {
   id: string;
   created_at: string;
@@ -14,16 +13,15 @@ export default function AdminDashboard() {
   const [users, setUsers] = useState<User[]>([]);
   const [adminKey, setAdminKey] = useState<string>("");
   const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [isLoading, setIsLoading] = useState(true); // Added loading state
+  const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [inputKey, setInputKey] = useState("");
   const router = useRouter();
 
-  // Wrapped in useCallback to safely include in useEffect dependency array
   const fetchUsers = useCallback(async (key: string) => {
     setIsLoading(true);
-    const backendUrl =
-      process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:5000";
+    const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:5000";
+    
     try {
       const res = await fetch(`${backendUrl}/api/admin/users`, {
         headers: { "x-admin-key": key },
@@ -32,9 +30,15 @@ export default function AdminDashboard() {
       if (res.status === 401) {
         setIsAuthenticated(false);
         setError("Invalid Admin Key. Access Denied.");
+        setAdminKey(""); 
         localStorage.removeItem("kmegle_admin_key");
         setIsLoading(false);
         return;
+      }
+      
+      // Prevent JSON parsing crashes on 500/502 HTML error pages from Render
+      if (!res.ok) {
+        throw new Error(`Server responded with status: ${res.status}`);
       }
       
       const data = await res.json();
@@ -42,7 +46,8 @@ export default function AdminDashboard() {
       setIsAuthenticated(true);
       setError(null);
     } catch (err) {
-      setError("Failed to connect to backend server.");
+      console.error("Fetch users error:", err);
+      setError("Failed to connect to backend server. It may be asleep or unreachable.");
     } finally {
       setIsLoading(false);
     }
@@ -58,17 +63,19 @@ export default function AdminDashboard() {
     }
   }, [fetchUsers]);
 
-  const handleLogin = (e: React.FormEvent) => {
+  const handleLogin = (e: FormEvent) => {
     e.preventDefault();
     if (!inputKey.trim()) return;
-    localStorage.setItem("kmegle_admin_key", inputKey.trim());
-    setAdminKey(inputKey.trim());
-    fetchUsers(inputKey.trim());
+    
+    const key = inputKey.trim();
+    localStorage.setItem("kmegle_admin_key", key);
+    setAdminKey(key);
+    fetchUsers(key);
   };
 
   const toggleBan = async (userId: string, currentStatus: boolean) => {
-    const backendUrl =
-      process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:5000";
+    const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:5000";
+    
     try {
       const res = await fetch(`${backendUrl}/api/admin/ban`, {
         method: "POST",
@@ -79,7 +86,17 @@ export default function AdminDashboard() {
         body: JSON.stringify({ userId, banStatus: !currentStatus }),
       });
       
+      // If the key expired or was rotated, kick them out to the login screen
+      if (res.status === 401) {
+        alert("Session expired. Please log in again.");
+        setIsAuthenticated(false);
+        setAdminKey("");
+        localStorage.removeItem("kmegle_admin_key");
+        return;
+      }
+
       if (res.ok) {
+        // Refresh the user list to show updated status
         fetchUsers(adminKey);
       } else {
         alert("Failed to update user status. Please try again.");
@@ -88,6 +105,13 @@ export default function AdminDashboard() {
       console.error("Ban toggle error:", err);
       alert("Network error while trying to update user status.");
     }
+  };
+
+  const handleLogout = () => {
+    localStorage.removeItem("kmegle_admin_key");
+    setAdminKey("");
+    setIsAuthenticated(false);
+    setInputKey("");
   };
 
   if (isLoading && !isAuthenticated) {
@@ -125,9 +149,14 @@ export default function AdminDashboard() {
             />
             <button
               type="submit"
-              className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-3 rounded-xl text-sm transition-all shadow-lg active:scale-95"
+              disabled={isLoading}
+              className="w-full bg-indigo-600 hover:bg-indigo-500 disabled:bg-indigo-800 text-white font-bold py-3 rounded-xl text-sm transition-all shadow-lg active:scale-95 flex justify-center items-center gap-2"
             >
-              Authenticate Access
+              {isLoading ? (
+                <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
+              ) : (
+                "Authenticate Access"
+              )}
             </button>
           </form>
         </div>
@@ -154,10 +183,7 @@ export default function AdminDashboard() {
           </div>
           <div className="flex items-center gap-3">
             <button
-              onClick={() => {
-                localStorage.removeItem("kmegle_admin_key");
-                setIsAuthenticated(false);
-              }}
+              onClick={handleLogout}
               className="bg-white/5 hover:bg-white/10 border border-white/10 px-4 py-2.5 rounded-full text-xs font-bold transition-all text-gray-400 hover:text-white"
             >
               Lock Dashboard
@@ -205,7 +231,7 @@ export default function AdminDashboard() {
                 {isLoading ? (
                   <tr>
                     <td colSpan={4} className="p-12 text-center text-gray-500 text-sm font-mono">
-                      Loading users...
+                      Refreshing users...
                     </td>
                   </tr>
                 ) : users.length === 0 ? (

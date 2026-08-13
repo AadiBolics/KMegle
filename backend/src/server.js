@@ -69,19 +69,29 @@ class MatchmakerQueue {
     this.size--;
   }
 
+  // Rotates the current head to the back of the queue if no valid match is found
+  rotateHeadToTail() {
+    if (this.size < 2 || !this.head) return;
+    const oldHead = this.head;
+    this.remove(oldHead.socket.id);
+    this.add(oldHead.socket, oldHead.userId);
+  }
+
   async tryMatch() {
     if (this.isMatching) return;
     this.isMatching = true;
 
     try {
-      while (this.size >= 2) {
+      let attempts = 0;
+      // Prevent infinite loops if everyone in queue has blocked each other
+      while (this.size >= 2 && attempts < this.size) {
         const user1 = this.head;
         if (!user1) break;
 
         let user2 = user1.next;
         let foundMatch = false;
 
-        // Loop through the queue until we find someone User 1 HASN'T blocked
+        // Loop through queue to find someone user1 hasn't blocked
         while (user2) {
           let hasBlocked = false;
           try {
@@ -99,8 +109,15 @@ class MatchmakerQueue {
           user2 = user2.next;
         }
 
-        // If everyone in line is blocked or no user2, stop for now
-        if (!foundMatch || !user2) break; 
+        // If everyone in line is blocked or no user2 available for user1
+        if (!foundMatch || !user2) {
+          this.rotateHeadToTail();
+          attempts++;
+          continue; 
+        }
+
+        // Reset attempt counter when a valid match is made
+        attempts = 0;
 
         this.remove(user1.socket.id);
         this.remove(user2.socket.id);
@@ -112,8 +129,13 @@ class MatchmakerQueue {
           u2: user2.userId
         });
 
-        user1.socket.join(roomId);
-        user2.socket.join(roomId);
+        // Clean up any stale rooms before joining the new room
+        [user1.socket, user2.socket].forEach((s) => {
+          s.rooms.forEach((r) => {
+            if (r !== s.id) s.leave(r);
+          });
+          s.join(roomId);
+        });
 
         user1.socket.emit("match_found", { role: "initiator", roomId });
         user2.socket.emit("match_found", { role: "responder", roomId });
@@ -138,11 +160,15 @@ io.on("connection", (socket) => {
     
     console.log(`🔍 User ${userId} entered the queue...`);
     
-    const isBanned = await dbService.isUserBanned(userId);
-    if (isBanned) {
-      console.log(`🛑 Banned user ${userId} tried to connect.`);
-      socket.emit("banned_alert", { message: "Your account has been suspended for policy violations." });
-      return; 
+    try {
+      const isBanned = await dbService.isUserBanned(userId);
+      if (isBanned) {
+        console.log(`🛑 Banned user ${userId} tried to connect.`);
+        socket.emit("banned_alert", { message: "Your account has been suspended for policy violations." });
+        return; 
+      }
+    } catch (err) {
+      console.error("Error checking ban status:", err);
     }
 
     queue.add(socket, userId);
@@ -160,9 +186,13 @@ io.on("connection", (socket) => {
     const blockedId = roomData.u1 === blockerId ? roomData.u2 : roomData.u1;
 
     if (blockerId && blockedId) {
-      const success = await dbService.blockUser(blockerId, blockedId);
-      if (success) {
-        console.log(`🛑 SUCCESS: User ${blockerId} permanently blocked ${blockedId}`);
+      try {
+        const success = await dbService.blockUser(blockerId, blockedId);
+        if (success) {
+          console.log(`🛑 SUCCESS: User ${blockerId} permanently blocked ${blockedId}`);
+        }
+      } catch (err) {
+        console.error("Error blocking user:", err);
       }
     }
   });
@@ -173,6 +203,12 @@ io.on("connection", (socket) => {
     activeRooms.delete(roomId);
   });
 
+  // Text Chat Relay
+  socket.on("chat_message", ({ message, roomId }) => {
+    socket.to(roomId).emit("chat_message", { message, senderId: socket.userId });
+  });
+
+  // WebRTC Signaling Relays
   socket.on("webrtc_offer", ({ offer, roomId }) => socket.to(roomId).emit("webrtc_offer", { offer }));
   socket.on("webrtc_answer", ({ answer, roomId }) => socket.to(roomId).emit("webrtc_answer", { answer }));
   socket.on("webrtc_ice_candidate", ({ candidate, roomId }) => socket.to(roomId).emit("webrtc_ice_candidate", { candidate }));
@@ -180,20 +216,34 @@ io.on("connection", (socket) => {
   socket.on("disconnect", () => {
     console.log(`🔴 Disconnected: ${socket.id}`);
     queue.remove(socket.id);
-    for (const [roomId, users] of activeRooms.entries()) {
+    for (const [roomId] of activeRooms.entries()) {
       if (roomId.includes(socket.id)) {
         socket.to(roomId).emit("stranger_disconnected");
         activeRooms.delete(roomId);
-        break;
       }
     }
   });
 });
 
+// --- RENDER ANTI-SLEEP & HEALTH CHECK ---
+app.get("/api/health", (req, res) => {
+  res.status(200).send("OK");
+});
+
+// Automatically pings the server every 14 minutes to prevent Render free instance from sleeping
+const RENDER_EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL || `http://localhost:${process.env.PORT || 5000}`;
+setInterval(async () => {
+  try {
+    const response = await fetch(`${RENDER_EXTERNAL_URL}/api/health`);
+    if (response.ok) {
+      console.log("💓 Keep-alive ping successful");
+    }
+  } catch (err) {
+    console.error("⚠️ Keep-alive ping error:", err.message);
+  }
+}, 14 * 60 * 1000);
+
 // METERED.CA TURN CREDENTIALS ENDPOINT
-// Fetches fresh, time-limited credentials from the Metered API.
-// Static credentials expire and won't work on restricted networks (e.g., college WiFi)
-// that require TURN relay — hence the black screen issue.
 app.get("/api/turn-credentials", async (req, res) => {
   const apiKey = process.env.TURN_API_KEY;
 
@@ -256,5 +306,3 @@ app.post("/api/admin/ban", adminAuth, async (req, res) => {
 
 const PORT = process.env.PORT || 5000;
 server.listen(PORT, () => console.log(`🚀 Signaling Server is running on port ${PORT}`));
-
-
