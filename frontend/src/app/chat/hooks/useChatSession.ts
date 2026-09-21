@@ -339,8 +339,8 @@ export function useChatSession() {
       newSocket.on("connect_error", (error) => {
         console.error("❌ SOCKET CONNECTION FAILED");
         console.error("message:", error.message);
-        console.error("description:", error.description);
-        console.error("context:", error.context);
+        //console.error("description:", error.description);
+        //console.error("context:", error.context);
         console.error("error:", error);
 
         setStatus(`Connection failed: ${error.message}`);
