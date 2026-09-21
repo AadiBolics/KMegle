@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { AuthProvider } from "../context/authContext";
 import { Inter } from "next/font/google";
 import "./globals.css";
 
@@ -49,7 +50,7 @@ export const metadata: Metadata = {
   openGraph: {
     type: "website",
     locale: "en_US",
-    url: "https://kmegle.com",
+    url: "https://kmegle.aadinadhan.me",
     siteName: "KMegle",
     title: "KMegle – Free Random Video Chat | Best Omegle Alternative",
     description:
@@ -71,7 +72,7 @@ export const metadata: Metadata = {
     images: ["/og-image.png"],
   },
   alternates: {
-    canonical: "https://kmegle.com",
+    canonical: "https://kmegle.aadinadhan.me",
   },
 };
 
@@ -91,7 +92,7 @@ export default function RootLayout({
               "@context": "https://schema.org",
               "@type": "WebApplication",
               name: "KMegle",
-              url: "https://kmegle.com",
+              url: "https://kmegle.aadinadhan.me",
               description:
                 "Free anonymous random video chat. Talk to strangers instantly with no sign-up required. The best Omegle alternative.",
               applicationCategory: "SocialNetworkingApplication",
@@ -105,7 +106,11 @@ export default function RootLayout({
           }}
         />
       </head>
-      <body className={inter.className}>{children}</body>
+      <body className={inter.className}>
+  <AuthProvider>
+    {children}
+  </AuthProvider>
+</body>
     </html>
   );
 }
