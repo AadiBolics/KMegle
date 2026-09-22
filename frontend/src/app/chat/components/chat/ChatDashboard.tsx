@@ -6,6 +6,7 @@ import ChatHeader from "./ChatHeader";
 import ChatSidebar from "./ChatSidebar";
 import VideoPanel from "./VideoPanel";
 import { useChatSession } from "../../hooks/useChatSession";
+import { useTheme } from "../../../../context/themeContext";
 
 export default function ChatDashboard() {
   const router = useRouter();
@@ -30,8 +31,7 @@ export default function ChatDashboard() {
   const chatEndRef = useRef<HTMLDivElement>(null);
 
   const [isFullscreen, setIsFullscreen] = useState(false);
-  const [isDarkMode, setIsDarkMode] = useState(true);
-
+  const { isDarkMode, toggleDarkMode } = useTheme();
   useEffect(() => {
     if (localVideoRef.current && localStream) {
       localVideoRef.current.srcObject = localStream;
@@ -60,6 +60,10 @@ export default function ChatDashboard() {
     cleanupConnection();
     router.push("/");
   };
+  const handleOpenSettings = () => {
+    cleanupConnection();
+  router.push("/settings");
+};
 
   return (
     <div
@@ -70,8 +74,8 @@ export default function ChatDashboard() {
       <ChatHeader
         isFullscreen={isFullscreen}
         isDarkMode={isDarkMode}
-        onToggleDarkMode={() => setIsDarkMode((value) => !value)}
-        onExit={handleExit}
+        onToggleDarkMode={toggleDarkMode}
+        onOpenSettings={handleOpenSettings}
       />
 
       <VideoPanel

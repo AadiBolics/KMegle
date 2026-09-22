@@ -363,127 +363,132 @@ export function useChatSession() {
       // ------------------------------------
 
       newSocket.on(
-  "match_found",
-  async (data) => {
-    console.log(
-      "🔥 MATCH_FOUND RECEIVED:",
-      data
-    );
+        "match_found",
+        async (data) => {
 
-    try {
-      setStatus(
-        "Match found! Connecting video..."
-      );
-
-      setRoomId(data.roomId);
-      roomIdRef.current = data.roomId;
-
-      pendingCandidates.current = [];
-
-      setMessages([
-        {
-          sender: "system",
-          text:
-            "You are now chatting with a random stranger.",
-        },
-      ]);
-
-      const currentStream =
-        localStreamRef.current || stream;
-
-      console.log(
-        "🔥 Local stream:",
-        currentStream
-      );
-
-      console.log(
-        "🔥 Creating peer connection..."
-      );
-
-      const pc = createPeerConnection(
-        newSocket,
-        data.roomId,
-        currentStream,
-      );
-
-      console.log(
-        "🔥 Peer connection created:",
-        pc
-      );
-
-      if (data.role === "initiator") {
-        console.log(
-          "🔥 I am the initiator"
-        );
-
-        const channel =
-          pc.createDataChannel("chat");
-
-        console.log(
-          "🔥 Data channel created"
-        );
-
-        setupDataChannel(channel);
-
-        console.log(
-          "🔥 Creating WebRTC offer..."
-        );
-
-        const offer =
-          await pc.createOffer();
-
-        console.log(
-          "🔥 Setting local description..."
-        );
-
-        await pc.setLocalDescription(
-          offer
-        );
-
-        console.log(
-          "🔥 Local description set, sending offer..."
-        );
-
-        newSocket.emit(
-          "webrtc_offer",
-          {
-            offer,
-            roomId: data.roomId,
-          }
-        );
-
-        console.log(
-          "🔥 WebRTC offer emitted"
-        );
-
-      } else {
-        console.log(
-          "🔥 I am the responder"
-        );
-
-        pc.ondatachannel = (event) => {
           console.log(
-            "🔥 Data channel received"
+            "🔥 MATCH_FOUND RECEIVED:",
+            data
           );
+          newSocket.emit("test_webrtc", {
+            roomId: data.roomId,
+            message: "hello from frontend",
+          });
 
-          setupDataChannel(
-            event.channel
-          );
-        };
-      }
+          try {
+            setStatus(
+              "Match found! Connecting video..."
+            );
 
-    } catch (error) {
-      console.error(
-        "❌ MATCH / WEBRTC INITIALIZATION FAILED:",
-        error
+            setRoomId(data.roomId);
+            roomIdRef.current = data.roomId;
+
+            pendingCandidates.current = [];
+
+            setMessages([
+              {
+                sender: "system",
+                text:
+                  "You are now chatting with a random stranger.",
+              },
+            ]);
+
+            const currentStream =
+              localStreamRef.current || stream;
+
+            console.log(
+              "🔥 Local stream:",
+              currentStream
+            );
+
+            console.log(
+              "🔥 Creating peer connection..."
+            );
+
+            const pc = createPeerConnection(
+              newSocket,
+              data.roomId,
+              currentStream,
+            );
+
+            console.log(
+              "🔥 Peer connection created:",
+              pc
+            );
+
+            if (data.role === "initiator") {
+              console.log(
+                "🔥 I am the initiator"
+              );
+
+              const channel =
+                pc.createDataChannel("chat");
+
+              console.log(
+                "🔥 Data channel created"
+              );
+
+              setupDataChannel(channel);
+
+              console.log(
+                "🔥 Creating WebRTC offer..."
+              );
+
+              const offer =
+                await pc.createOffer();
+
+              console.log(
+                "🔥 Setting local description..."
+              );
+
+              await pc.setLocalDescription(
+                offer
+              );
+
+              console.log(
+                "🔥 Local description set, sending offer..."
+              );
+
+              newSocket.emit(
+                "webrtc_offer",
+                {
+                  offer,
+                  roomId: data.roomId,
+                }
+              );
+
+              console.log(
+                "🔥 WebRTC offer emitted"
+              );
+
+            } else {
+              console.log(
+                "🔥 I am the responder"
+              );
+
+              pc.ondatachannel = (event) => {
+                console.log(
+                  "🔥 Data channel received"
+                );
+
+                setupDataChannel(
+                  event.channel
+                );
+              };
+            }
+
+          } catch (error) {
+            console.error(
+              "❌ MATCH / WEBRTC INITIALIZATION FAILED:",
+              error
+            );
+
+            setStatus(
+              "Failed to establish video connection."
+            );
+          }
+        }
       );
-
-      setStatus(
-        "Failed to establish video connection."
-      );
-    }
-  }
-);
 
       // ------------------------------------
       // WEBRTC OFFER

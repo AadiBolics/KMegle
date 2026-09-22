@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { AuthProvider } from "../context/authContext";
+import { ThemeProvider } from "../context/themeContext";
 import { Inter } from "next/font/google";
 import "./globals.css";
 
@@ -108,7 +109,9 @@ export default function RootLayout({
       </head>
       <body className={inter.className}>
   <AuthProvider>
-    {children}
+    <ThemeProvider>
+      {children}
+    </ThemeProvider>
   </AuthProvider>
 </body>
     </html>

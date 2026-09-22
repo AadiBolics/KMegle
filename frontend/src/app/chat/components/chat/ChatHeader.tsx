@@ -1,17 +1,18 @@
 "use client";
 
+
 interface ChatHeaderProps {
   isFullscreen: boolean;
   isDarkMode: boolean;
   onToggleDarkMode: () => void;
-  onExit: () => void;
+  onOpenSettings: () => void;
 }
 
 export default function ChatHeader({
   isFullscreen,
   isDarkMode,
   onToggleDarkMode,
-  onExit,
+  onOpenSettings,
 }: ChatHeaderProps) {
   if (isFullscreen) return null;
 
@@ -39,11 +40,31 @@ export default function ChatHeader({
         </button>
 
         <button
-          onClick={onExit}
-          className="bg-black/30 hover:bg-black/50 backdrop-blur-md border border-white/20 px-5 py-2 rounded-full text-sm font-semibold text-white transition-all shadow-lg"
-        >
-          Exit
-        </button>
+  onClick={onOpenSettings}
+  className="bg-black/30 hover:bg-black/50 backdrop-blur-md border border-white/20 p-2 rounded-full text-white transition-all shadow-lg"
+  title="Settings"
+  aria-label="Open settings"
+>
+  <svg
+    className="w-5 h-5"
+    fill="none"
+    stroke="currentColor"
+    viewBox="0 0 24 24"
+  >
+    <path
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth={2}
+      d="M12 15.5a3.5 3.5 0 100-7 3.5 3.5 0 000 7z"
+    />
+    <path
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth={2}
+      d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06-1.5 1.5-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V20h-2.12v-.5a1.65 1.65 0 00-1-1.51 1.65 1.65 0 00-1.82.33l-.06.06-1.5-1.5.06-.06A1.65 1.65 0 009.4 15a1.65 1.65 0 00-1.51-1H7v-2h.89A1.65 1.65 0 009.4 11a1.65 1.65 0 00-.33-1.82l-.06-.06 1.5-1.5.06.06a1.65 1.65 0 001.82.33 1.65 1.65 0 001-1.51V6h2.12v.5a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06 1.5 1.5-.06.06A1.65 1.65 0 0019.4 11a1.65 1.65 0 001.51 1H21v2h-.09a1.65 1.65 0 00-1.51 1z"
+    />
+  </svg>
+</button>
       </div>
     </header>
   );

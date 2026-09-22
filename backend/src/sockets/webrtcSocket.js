@@ -1,4 +1,11 @@
 function registerWebRTCSocket(socket, roomService) {
+
+  console.log(
+    "🔌 WebRTC socket handlers registered for:",
+    socket.id
+  );
+
+
   socket.on(
     "webrtc_offer",
     ({ offer, roomId }) => {

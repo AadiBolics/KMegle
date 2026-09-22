@@ -5,12 +5,11 @@ const roomService = {
     activeRooms.set(roomId, {
       u1: {
         userId: user1.userId,
-        socketId: user1.socketId,
+        socketId: user1.socket.id,
       },
-
       u2: {
         userId: user2.userId,
-        socketId: user2.socketId,
+        socketId: user2.socket.id,
       },
     });
   },
