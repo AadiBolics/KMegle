@@ -29,12 +29,12 @@ export default function VideoPanel({
 }: VideoPanelProps) {
   return (
     <div
-      className={`relative group flex-shrink-0 lg:flex-shrink ${
-        isFullscreen
-          ? "absolute inset-0 z-50"
-          : "w-full lg:w-[70%] h-[55dvh] lg:h-full"
-      } bg-black overflow-hidden transition-all duration-500`}
-    >
+  className={`relative group flex-shrink-0 ${
+    isFullscreen
+      ? "fixed inset-0 z-[100] w-screen h-[100dvh]"
+      : "w-full lg:w-[70%] h-[55dvh] lg:h-full"
+  } bg-black overflow-hidden transition-all duration-500`}
+>
       <video
         ref={remoteVideoRef}
         autoPlay
