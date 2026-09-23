@@ -1,7 +1,7 @@
 const express = require("express");
 
 const db = require("../config/db");
-const httpFirebaseAuth = require("../../middleware/httpFirebaseAuth");
+const httpFirebaseAuth = require("../middleware/httpFIrebaseAuth");
 
 const router = express.Router();
 
