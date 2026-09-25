@@ -18,7 +18,11 @@ function createSocketServer(server) {
         // Allow requests with no origin (e.g. mobile apps, curl, UptimeRobot)
         if (!origin) return callback(null, true);
 
-        if (allowedOrigins.includes(origin)) {
+        if (
+          allowedOrigins.includes(origin) ||
+          origin.endsWith(".vercel.app") ||
+          /^https?:\/\/localhost(:\d+)?$/.test(origin)
+        ) {
           return callback(null, true);
         }
 

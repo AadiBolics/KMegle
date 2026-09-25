@@ -12,10 +12,22 @@ import { io, Socket } from "socket.io-client";
 import { ChatMessage } from "../types/chat";
 import { useAuth } from "../../../context/authContext";
 
-const DEFAULT_BACKEND_URL = "http://localhost:5000";
-
-function getBackendUrl() {
-  return process.env.NEXT_PUBLIC_BACKEND_URL || DEFAULT_BACKEND_URL;
+// In production the Next.js rewrite in next.config.ts proxies
+// /socket.io/* and /api/backend/* through Vercel to the Render backend.
+// Locally the same paths hit localhost:5000 via the dev-server proxy.
+// The browser NEVER makes direct requests to onrender.com.
+function getSocketUrl() {
+  if (typeof window === "undefined") return "http://localhost:5000";
+  // In local development, connect directly to localhost:5000 to avoid proxy latency/quirks
+  if (
+    window.location.hostname === "localhost" ||
+    window.location.hostname === "127.0.0.1"
+  ) {
+    return process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:5000";
+  }
+  // In production (Vercel), connect to the current origin so all traffic
+  // is proxied through Vercel, bypassing ISP/campus DNS blocks on *.onrender.com.
+  return window.location.origin;
 }
 
 export function useChatSession() {
@@ -119,9 +131,16 @@ export function useChatSession() {
 
   const prefetchIceConfig = useCallback(async () => {
     try {
-      const response = await fetch(
-        `${getBackendUrl()}/api/turn-credentials`,
-      );
+      const isLocal =
+        typeof window !== "undefined" &&
+        (window.location.hostname === "localhost" ||
+          window.location.hostname === "127.0.0.1");
+
+      const url = isLocal
+        ? `${process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:5000"}/api/turn-credentials`
+        : "/api/backend/turn-credentials";
+
+      const response = await fetch(url);
 
       const turnData = await response.json();
 
@@ -764,7 +783,7 @@ export function useChatSession() {
         // ----------------------------------
 
         const newSocket = io(
-          getBackendUrl(),
+          getSocketUrl(),
           {
             transports: ["polling", "websocket"],
 
@@ -781,15 +800,21 @@ export function useChatSession() {
           newSocket,
           stream,
         );
-      } catch (error) {
+      } catch (error: any) {
         console.error(
           "Media / connection error:",
           error,
         );
 
         setIsConnecting(false);
+        const isPermissionError =
+          error?.name === "NotAllowedError" ||
+          error?.name === "PermissionDeniedError";
+
         setStatus(
-          "Error: Camera and Microphone permissions are required.",
+          isPermissionError
+            ? "Error: Camera and Microphone permissions are required."
+            : error?.message || "Failed to start session. Please try again.",
         );
 
         // If camera was opened but the socket
