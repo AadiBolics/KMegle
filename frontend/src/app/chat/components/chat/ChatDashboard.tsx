@@ -14,6 +14,7 @@ export default function ChatDashboard() {
   const {
     socket,
     status,
+    isConnecting,
     localStream,
     remoteStream,
     messages,
@@ -83,6 +84,7 @@ export default function ChatDashboard() {
         localVideoRef={localVideoRef}
         remoteStream={remoteStream}
         socketConnected={!!socket}
+        isConnecting={isConnecting}
         status={status}
         isFullscreen={isFullscreen}
         onToggleSearch={toggleSearch}

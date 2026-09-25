@@ -7,6 +7,7 @@ interface VideoPanelProps {
   localVideoRef: RefObject<HTMLVideoElement | null>;
   remoteStream: MediaStream | null;
   socketConnected: boolean;
+  isConnecting: boolean;
   status: string;
   isFullscreen: boolean;
   onToggleSearch: () => void;
@@ -20,6 +21,7 @@ export default function VideoPanel({
   localVideoRef,
   remoteStream,
   socketConnected,
+  isConnecting,
   status,
   isFullscreen,
   onToggleSearch,
@@ -27,6 +29,7 @@ export default function VideoPanel({
   onBlock,
   onToggleFullscreen,
 }: VideoPanelProps) {
+  const isBusy = isConnecting || socketConnected;
   return (
     <div
   className={`relative group flex-shrink-0 ${
@@ -62,7 +65,7 @@ export default function VideoPanel({
 
       {!remoteStream && (
         <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none z-20 px-4 text-center">
-          {socketConnected ? (
+          {(socketConnected || isConnecting) ? (
             <>
               <div className="w-12 h-12 lg:w-16 lg:h-16 border-4 border-indigo-500/30 border-t-indigo-500 rounded-full animate-spin mb-4 lg:mb-6 shadow-[0_0_30px_rgba(99,102,241,0.5)]" />
               <p className="text-indigo-200 font-medium tracking-wide animate-pulse text-xs lg:text-base">
@@ -70,9 +73,17 @@ export default function VideoPanel({
               </p>
             </>
           ) : (
-            <p className="text-gray-300 font-medium tracking-wide text-sm lg:text-base drop-shadow-md">
-              Click Start to begin matching.
-            </p>
+            <>
+              <p className="text-gray-300 font-medium tracking-wide text-sm lg:text-base drop-shadow-md">
+                Click Start to begin matching.
+              </p>
+              {/* Show error/info status even when disconnected */}
+              {status && status !== "Ready to connect." && (
+                <p className="mt-2 text-red-400 font-medium text-xs lg:text-sm drop-shadow-md max-w-xs">
+                  {status}
+                </p>
+              )}
+            </>
           )}
         </div>
       )}
@@ -80,13 +91,16 @@ export default function VideoPanel({
       <div className="absolute bottom-4 lg:bottom-6 left-1/2 -translate-x-1/2 flex items-center gap-2 lg:gap-3 p-2 rounded-full bg-black/70 backdrop-blur-xl border border-white/15 opacity-100 z-40 shadow-2xl max-w-[95vw] overflow-x-auto">
         <button
           onClick={onToggleSearch}
-          className={`px-5 lg:px-8 py-2.5 lg:py-3 rounded-full font-bold text-xs lg:text-sm transition-all whitespace-nowrap ${
+          disabled={isConnecting}
+          className={`px-5 lg:px-8 py-2.5 lg:py-3 rounded-full font-bold text-xs lg:text-sm transition-all whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed ${
             socketConnected
               ? "bg-red-500/20 hover:bg-red-500/30 text-red-300 border border-red-500/30"
+              : isConnecting
+              ? "bg-indigo-600/50 text-white/70 cursor-wait"
               : "bg-indigo-600 hover:bg-indigo-500 text-white shadow-[0_0_20px_rgba(99,102,241,0.4)]"
           }`}
         >
-          {socketConnected ? "Stop" : "Start"}
+          {socketConnected ? "Stop" : isConnecting ? "Connecting..." : "Start"}
         </button>
 
         {socketConnected && (

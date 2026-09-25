@@ -5,9 +5,26 @@ const syncUser = require("../middleware/syncUser");
 const banCheck = require("../middleware/banCheck");
 
 function createSocketServer(server) {
+  const allowedOrigins = [
+    "http://localhost:3000",
+    ...(process.env.FRONTEND_URL
+      ? process.env.FRONTEND_URL.split(",").map((url) => url.trim())
+      : []),
+  ];
+
   const io = new Server(server, {
     cors: {
-      origin: "http://localhost:3000",
+      origin: (origin, callback) => {
+        // Allow requests with no origin (e.g. mobile apps, curl, UptimeRobot)
+        if (!origin) return callback(null, true);
+
+        if (allowedOrigins.includes(origin)) {
+          return callback(null, true);
+        }
+
+        console.warn(`⚠️ CORS blocked origin: ${origin}`);
+        return callback(new Error(`CORS policy: origin ${origin} not allowed`));
+      },
       methods: ["GET", "POST"],
       credentials: true,
     },

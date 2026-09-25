@@ -41,6 +41,7 @@ export function useChatSession() {
 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [chatInput, setChatInput] = useState("");
+  const [isConnecting, setIsConnecting] = useState(false);
 
   const iceConfigRef = useRef<RTCConfiguration>({
     iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
@@ -307,6 +308,8 @@ export function useChatSession() {
           newSocket.id,
         );
 
+        setIsConnecting(false);
+
         setStatus(
           "Connected! Entering waiting pool...",
         );
@@ -343,6 +346,7 @@ export function useChatSession() {
         //console.error("context:", error.context);
         console.error("error:", error);
 
+        setIsConnecting(false);
         setStatus(`Connection failed: ${error.message}`);
       });
 
@@ -713,6 +717,8 @@ export function useChatSession() {
 
       setStatus("Requesting camera...");
 
+      setIsConnecting(true);
+
       setMessages([
         {
           sender: "system",
@@ -760,7 +766,7 @@ export function useChatSession() {
         const newSocket = io(
           getBackendUrl(),
           {
-            transports: ["websocket"],
+            transports: ["polling", "websocket"],
 
             auth: {
               token,
@@ -781,6 +787,7 @@ export function useChatSession() {
           error,
         );
 
+        setIsConnecting(false);
         setStatus(
           "Error: Camera and Microphone permissions are required.",
         );
@@ -924,6 +931,7 @@ export function useChatSession() {
   return {
     socket,
     status,
+    isConnecting,
     roomId,
     localStream,
     remoteStream,
