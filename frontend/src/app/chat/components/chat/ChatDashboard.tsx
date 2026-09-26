@@ -106,6 +106,7 @@ export default function ChatDashboard() {
         isRemoteWarning={isRemoteWarning}
         isCooldownActive={isCooldownActive}
         cooldownRemaining={cooldownRemaining}
+        isDarkMode={isDarkMode}
         onToggleSearch={toggleSearch}
         onNext={next}
         onBlock={block}

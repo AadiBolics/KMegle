@@ -14,6 +14,7 @@ interface VideoPanelProps {
   isRemoteWarning?: boolean;
   isCooldownActive?: boolean;
   cooldownRemaining?: number;
+  isDarkMode?: boolean;
   onToggleSearch: () => void;
   onNext: () => void;
   onBlock: () => void;
@@ -32,6 +33,7 @@ export default function VideoPanel({
   isRemoteWarning = false,
   isCooldownActive = false,
   cooldownRemaining = 0,
+  isDarkMode = true,
   onToggleSearch,
   onNext,
   onBlock,
@@ -51,7 +53,9 @@ export default function VideoPanel({
         isFullscreen
           ? "fixed inset-0 z-[100] w-screen h-[100dvh]"
           : "w-full lg:w-[70%] h-[55dvh] lg:h-full"
-      } bg-black overflow-hidden transition-all duration-500`}
+      } overflow-hidden transition-all duration-500 ${
+        isDarkMode ? "bg-[#0a0a0f]" : "bg-gray-900"
+      }`}
     >
       {/* Remote Video */}
       <video
@@ -82,15 +86,27 @@ export default function VideoPanel({
 
       {/* Warning Phase Banner — local sender */}
       {isWarning && (
-        <div className="absolute top-4 left-1/2 -translate-x-1/2 z-40 w-[92%] max-w-lg animate-bounce">
-          <div className="flex items-center gap-3 px-4 py-3 rounded-2xl bg-amber-500/20 backdrop-blur-xl border border-amber-500/40 shadow-2xl text-amber-200">
-            <div className="flex-shrink-0 w-8 h-8 rounded-full bg-amber-500/30 flex items-center justify-center">
-              <svg className="w-5 h-5 text-amber-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+        <div className="absolute top-4 left-1/2 -translate-x-1/2 z-40 w-[92%] max-w-md">
+          <div
+            className="flex items-start gap-3 px-4 py-3.5 rounded-xl shadow-xl"
+            style={{
+              background: "rgba(180,120,0,0.18)",
+              backdropFilter: "blur(16px)",
+              border: "1px solid rgba(234,179,8,0.35)",
+            }}
+          >
+            {/* Icon */}
+            <div className="mt-0.5 flex-shrink-0 w-7 h-7 rounded-lg bg-yellow-400/20 flex items-center justify-center">
+              <svg className="w-4 h-4 text-yellow-300" viewBox="0 0 20 20" fill="currentColor">
+                <path fillRule="evenodd" d="M8.485 2.495c.673-1.167 2.357-1.167 3.03 0l6.28 10.875c.673 1.167-.17 2.625-1.516 2.625H3.72c-1.347 0-2.189-1.458-1.515-2.625L8.485 2.495zM10 5a.75.75 0 01.75.75v3.5a.75.75 0 01-1.5 0v-3.5A.75.75 0 0110 5zm0 9a1 1 0 100-2 1 1 0 000 2z" clipRule="evenodd" />
               </svg>
             </div>
-            <div className="text-xs lg:text-sm font-semibold leading-snug">
-              Inappropriate content detected. Please adjust your camera immediately.
+            {/* Text */}
+            <div>
+              <p className="text-yellow-200 text-xs font-bold uppercase tracking-widest mb-0.5">Content Warning</p>
+              <p className="text-yellow-100/80 text-xs leading-relaxed">
+                Your camera may be showing content that violates our guidelines. Please adjust your position.
+              </p>
             </div>
           </div>
         </div>
@@ -98,36 +114,59 @@ export default function VideoPanel({
 
       {/* Remote Warning Banner — stranger's feed is blurred */}
       {isRemoteWarning && !isWarning && (
-        <div className="absolute top-4 left-1/2 -translate-x-1/2 z-40 w-[92%] max-w-lg">
-          <div className="flex items-center gap-3 px-4 py-3 rounded-2xl bg-red-500/20 backdrop-blur-xl border border-red-500/40 shadow-2xl text-red-200">
-            <div className="flex-shrink-0 w-8 h-8 rounded-full bg-red-500/30 flex items-center justify-center">
-              <svg className="w-5 h-5 text-red-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21" />
+        <div className="absolute top-4 left-1/2 -translate-x-1/2 z-40 w-[92%] max-w-md">
+          <div
+            className="flex items-start gap-3 px-4 py-3.5 rounded-xl shadow-xl"
+            style={{
+              background: "rgba(140,0,0,0.22)",
+              backdropFilter: "blur(16px)",
+              border: "1px solid rgba(239,68,68,0.35)",
+            }}
+          >
+            {/* Icon */}
+            <div className="mt-0.5 flex-shrink-0 w-7 h-7 rounded-lg bg-red-500/20 flex items-center justify-center">
+              <svg className="w-4 h-4 text-red-300" viewBox="0 0 20 20" fill="currentColor">
+                <path fillRule="evenodd" d="M10 1a9 9 0 100 18A9 9 0 0010 1zm3.536 5.464a.75.75 0 010 1.06L11.06 10l2.476 2.476a.75.75 0 11-1.06 1.06L10 11.06l-2.476 2.476a.75.75 0 11-1.06-1.06L8.94 10 6.464 7.524a.75.75 0 011.06-1.06L10 8.94l2.476-2.476a.75.75 0 011.06 0z" clipRule="evenodd" />
               </svg>
             </div>
-            <div className="text-xs lg:text-sm font-semibold leading-snug">
-              Inappropriate content from stranger detected. Feed blurred for your protection.
+            {/* Text */}
+            <div>
+              <p className="text-red-300 text-xs font-bold uppercase tracking-widest mb-0.5">Feed Hidden</p>
+              <p className="text-red-100/75 text-xs leading-relaxed">
+                The other person&apos;s video has been blurred. We&apos;re keeping an eye on it.
+              </p>
             </div>
           </div>
         </div>
       )}
 
-      {/* Moderation Cooldown Modal / Overlay */}
+      {/* Moderation Cooldown Overlay */}
       {isCooldownActive && (
-        <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-black/85 backdrop-blur-md p-6 text-center">
-          <div className="w-16 h-16 rounded-full bg-red-500/20 border border-red-500/40 flex items-center justify-center mb-4">
-            <svg className="w-8 h-8 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" />
-            </svg>
-          </div>
-          <h3 className="text-lg lg:text-xl font-bold text-white mb-1">
-            Temporary Moderation Cooldown
-          </h3>
-          <p className="text-gray-300 text-xs lg:text-sm max-w-sm mb-4">
-            Multiple violations of community guidelines were detected on your camera. Your matching privileges are temporarily suspended.
-          </p>
-          <div className="px-5 py-2.5 rounded-full bg-red-500/20 border border-red-500/30 text-red-300 font-mono font-bold text-lg">
-            {formatCooldown(cooldownRemaining)}
+        <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-black/80 backdrop-blur-lg p-6">
+          <div className="w-full max-w-xs text-center">
+            {/* Icon ring */}
+            <div className="mx-auto w-14 h-14 rounded-full bg-red-500/15 border border-red-500/30 flex items-center justify-center mb-5">
+              <svg className="w-6 h-6 text-red-400" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                <circle cx="12" cy="12" r="10" strokeWidth="1.5" />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M12 8v4l2.5 2.5" />
+              </svg>
+            </div>
+
+            <h3 className="text-white text-base font-semibold mb-1">You&apos;re on a break</h3>
+            <p className="text-gray-400 text-xs leading-relaxed mb-5 max-w-[240px] mx-auto">
+              We noticed repeated content violations. Matching is paused for a short while.
+            </p>
+
+            {/* Countdown pill */}
+            <div
+              className="inline-flex items-center gap-2 px-5 py-2 rounded-full"
+              style={{ background: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.25)" }}
+            >
+              <svg className="w-3.5 h-3.5 text-red-400" viewBox="0 0 20 20" fill="currentColor">
+                <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm.75-13a.75.75 0 00-1.5 0v5c0 .414.336.75.75.75h4a.75.75 0 000-1.5h-3.25V5z" clipRule="evenodd" />
+              </svg>
+              <span className="text-red-300 font-mono font-semibold text-sm tabular-nums">{formatCooldown(cooldownRemaining)}</span>
+            </div>
           </div>
         </div>
       )}
