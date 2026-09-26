@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "../../context/authContext";
 import { useTheme } from "../../context/themeContext";
@@ -8,6 +9,11 @@ export default function SettingsPage() {
   const router = useRouter();
   const { user, loading, logout } = useAuth();
   const { isDarkMode } = useTheme();
+  const [openPolicy, setOpenPolicy] = useState<"terms" | "guidelines" | "privacy" | null>(null);
+
+  const togglePolicy = (policy: "terms" | "guidelines" | "privacy") => {
+    setOpenPolicy((prev) => (prev === policy ? null : policy));
+  };
 
   const handleLogout = async () => {
     try {
@@ -202,28 +208,81 @@ export default function SettingsPage() {
                 : "bg-white border-gray-200 shadow-sm"
             }`}
           >
-            <button
-              disabled
-              className="w-full flex items-center justify-between p-5 text-left opacity-70 cursor-default"
-            >
-              <div>
-                <p className="font-semibold">
-                  Terms of Service
-                </p>
+            {/* Terms of Service */}
+            <div>
+              <button
+                onClick={() => togglePolicy("terms")}
+                className={`w-full flex items-center justify-between p-5 text-left transition ${
+                  isDarkMode ? "hover:bg-white/5" : "hover:bg-gray-50"
+                }`}
+              >
+                <div>
+                  <p className="font-semibold">Terms of Service</p>
+                  <p
+                    className={`text-sm mt-1 ${
+                      isDarkMode ? "text-gray-400" : "text-gray-600"
+                    }`}
+                  >
+                    Rules, age requirements, and user agreements for using KMegle
+                  </p>
+                </div>
+                <svg
+                  className={`w-5 h-5 text-gray-500 transition-transform duration-200 ${
+                    openPolicy === "terms" ? "rotate-90" : ""
+                  }`}
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M9 5l7 7-7 7"
+                  />
+                </svg>
+              </button>
 
-                <p
-                  className={`text-sm mt-1 ${
-                    isDarkMode ? "text-gray-500" : "text-gray-600"
+              {openPolicy === "terms" && (
+                <div
+                  className={`px-5 pb-5 pt-2 text-sm border-t leading-relaxed ${
+                    isDarkMode
+                      ? "border-white/5 text-gray-300 bg-white/[0.02]"
+                      : "border-gray-100 text-gray-700 bg-gray-50/50"
                   }`}
                 >
-                  Rules for using KMegle
-                </p>
-              </div>
+                  <div className="space-y-4">
+                    <div>
+                      <h4 className="font-semibold text-base mb-1">1. Age Requirement</h4>
+                      <p>
+                        You must be at least 18 years old (or the legal age of majority in your jurisdiction) to use KMegle video chat. Minors under 18 are strictly prohibited from using the platform.
+                      </p>
+                    </div>
 
-              <span className="text-gray-500 text-sm">
-                Soon
-              </span>
-            </button>
+                    <div>
+                      <h4 className="font-semibold text-base mb-1">2. Peer-to-Peer (P2P) WebRTC Architecture</h4>
+                      <p>
+                        KMegle connects users directly via WebRTC Peer-to-Peer protocols for real-time video and audio communication. By using KMegle, you understand and acknowledge that P2P technology inherently exchanges network connection details (including public IP addresses) directly between video chat peers.
+                      </p>
+                    </div>
+
+                    <div>
+                      <h4 className="font-semibold text-base mb-1">3. User Conduct & Moderation</h4>
+                      <p>
+                        You agree to follow all local, state, and international laws. KMegle reserves the right to terminate access, suspend accounts, or permanently block Firebase UIDs and IP addresses without prior notice for any violation of these terms.
+                      </p>
+                    </div>
+
+                    <div>
+                      <h4 className="font-semibold text-base mb-1">4. Recording Disclaimer</h4>
+                      <p>
+                        While KMegle does not record or store any video or audio streams, we cannot prevent third-party peers from using external screen recording software. Never share personally identifiable information (PII), financial details, or passwords during video chats.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
 
             <div
               className={
@@ -233,28 +292,158 @@ export default function SettingsPage() {
               }
             />
 
-            <button
-              disabled
-              className="w-full flex items-center justify-between p-5 text-left opacity-70 cursor-default"
-            >
-              <div>
-                <p className="font-semibold">
-                  Community Guidelines
-                </p>
+            {/* Community Guidelines */}
+            <div>
+              <button
+                onClick={() => togglePolicy("guidelines")}
+                className={`w-full flex items-center justify-between p-5 text-left transition ${
+                  isDarkMode ? "hover:bg-white/5" : "hover:bg-gray-50"
+                }`}
+              >
+                <div>
+                  <p className="font-semibold">Community Guidelines</p>
+                  <p
+                    className={`text-sm mt-1 ${
+                      isDarkMode ? "text-gray-400" : "text-gray-600"
+                    }`}
+                  >
+                    Safety, behavior, and zero-tolerance policies
+                  </p>
+                </div>
+                <svg
+                  className={`w-5 h-5 text-gray-500 transition-transform duration-200 ${
+                    openPolicy === "guidelines" ? "rotate-90" : ""
+                  }`}
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M9 5l7 7-7 7"
+                  />
+                </svg>
+              </button>
 
-                <p
-                  className={`text-sm mt-1 ${
-                    isDarkMode ? "text-gray-500" : "text-gray-600"
+              {openPolicy === "guidelines" && (
+                <div
+                  className={`px-5 pb-5 pt-2 text-sm border-t leading-relaxed ${
+                    isDarkMode
+                      ? "border-white/5 text-gray-300 bg-white/[0.02]"
+                      : "border-gray-100 text-gray-700 bg-gray-50/50"
                   }`}
                 >
-                  Safety and behavior guidelines
-                </p>
-              </div>
+                  <div className="space-y-4">
+                    <div>
+                      <h4 className="font-semibold text-base mb-1"> Zero-Tolerance Nudity & Sexual Content</h4>
+                      <p>
+                        Sexually explicit behavior, nudity, pornography, or suggestive content is strictly prohibited. Accounts engaging in such acts will face immediate permanent IP and UID bans.
+                      </p>
+                    </div>
 
-              <span className="text-gray-500 text-sm">
-                Soon
-              </span>
-            </button>
+                    <div>
+                      <h4 className="font-semibold text-base mb-1"> Harassment, Hate Speech & Bullying</h4>
+                      <p>
+                        We do not tolerate racial slurs, hate speech, harassment, intimidation, discrimination, or abusive behavior of any kind. Respect all users regardless of background.
+                      </p>
+                    </div>
+
+                    <div>
+                      <h4 className="font-semibold text-base mb-1"> Illegal Acts & Threats</h4>
+                      <p>
+                        Promoting illegal activities, weapons, violence, self-harm, or making threats against others will result in immediate bans and potential referral to law enforcement agencies.
+                      </p>
+                    </div>
+
+                    <div>
+                      <h4 className="font-semibold text-base mb-1"> Reporting & Blocking</h4>
+                      <p>
+                        If you encounter anyone violating these rules, use the Block feature immediately. Blocking severs the connection and prevents future matchmaking with that user.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div
+              className={
+                isDarkMode
+                  ? "border-t border-white/5"
+                  : "border-t border-gray-100"
+              }
+            />
+
+            {/* Privacy Policy */}
+            <div>
+              <button
+                onClick={() => togglePolicy("privacy")}
+                className={`w-full flex items-center justify-between p-5 text-left transition ${
+                  isDarkMode ? "hover:bg-white/5" : "hover:bg-gray-50"
+                }`}
+              >
+                <div>
+                  <p className="font-semibold">Privacy Policy</p>
+                  <p
+                    className={`text-sm mt-1 ${
+                      isDarkMode ? "text-gray-400" : "text-gray-600"
+                    }`}
+                  >
+                    How we handle video streams, data, and user logs
+                  </p>
+                </div>
+                <svg
+                  className={`w-5 h-5 text-gray-500 transition-transform duration-200 ${
+                    openPolicy === "privacy" ? "rotate-90" : ""
+                  }`}
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M9 5l7 7-7 7"
+                  />
+                </svg>
+              </button>
+
+              {openPolicy === "privacy" && (
+                <div
+                  className={`px-5 pb-5 pt-2 text-sm border-t leading-relaxed ${
+                    isDarkMode
+                      ? "border-white/5 text-gray-300 bg-white/[0.02]"
+                      : "border-gray-100 text-gray-700 bg-gray-50/50"
+                  }`}
+                >
+                  <div className="space-y-4">
+                    <div>
+                      <h4 className="font-semibold text-base mb-1"> Zero Video/Audio Data Retention</h4>
+                      <p>
+                        Video and audio streams are transmitted directly peer-to-peer using WebRTC. They are never recorded, captured, processed, or stored on KMegle servers.
+                      </p>
+                    </div>
+
+                    <div>
+                      <h4 className="font-semibold text-base mb-1"> Account & Security Data</h4>
+                      <p>
+                        We collect minimal identifiers (Firebase Auth UID, email if authenticated, and hashed IP addresses) solely for managing account state, authentication, and enforcing user safety bans.
+                      </p>
+                    </div>
+
+                    <div>
+                      <h4 className="font-semibold text-base mb-1"> Third-Party Services</h4>
+                      <p>
+                        KMegle uses Firebase Authentication for account management and TURN servers for NAT traversal where direct P2P connections cannot be established. No user data is sold or shared with advertisers.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
         </section>
 

@@ -6,6 +6,7 @@ import ChatHeader from "./ChatHeader";
 import ChatSidebar from "./ChatSidebar";
 import VideoPanel from "./VideoPanel";
 import { useChatSession } from "../../hooks/useChatSession";
+import { useNsfwModeration } from "../../hooks/useNsfwModeration";
 import { useTheme } from "../../../../context/themeContext";
 
 export default function ChatDashboard() {
@@ -30,6 +31,18 @@ export default function ChatDashboard() {
   const localVideoRef = useRef<HTMLVideoElement>(null);
   const remoteVideoRef = useRef<HTMLVideoElement>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
+
+  const {
+    isWarning,
+    isCooldownActive,
+    cooldownRemaining,
+  } = useNsfwModeration({
+    videoRef: localVideoRef,
+    isActive: !!localStream,
+    onCriticalViolation: () => {
+      cleanupConnection();
+    },
+  });
 
   const [isFullscreen, setIsFullscreen] = useState(false);
   const { isDarkMode, toggleDarkMode } = useTheme();
@@ -87,6 +100,9 @@ export default function ChatDashboard() {
         isConnecting={isConnecting}
         status={status}
         isFullscreen={isFullscreen}
+        isWarning={isWarning}
+        isCooldownActive={isCooldownActive}
+        cooldownRemaining={cooldownRemaining}
         onToggleSearch={toggleSearch}
         onNext={next}
         onBlock={block}

@@ -734,6 +734,25 @@ export function useChatSession() {
         return;
       }
 
+      // Check moderation cooldown
+      if (typeof window !== "undefined") {
+        const stored = localStorage.getItem("kmegle_nsfw_cooldown_until");
+        if (stored) {
+          const expiry = parseInt(stored, 10);
+          const remaining = Math.max(0, Math.ceil((expiry - Date.now()) / 1000));
+          if (remaining > 0) {
+            const mins = Math.floor(remaining / 60);
+            const secs = remaining % 60;
+            setStatus(
+              `🚨 Moderation cooldown active (${mins}:${secs.toString().padStart(2, "0")}). Please wait.`
+            );
+            return;
+          } else {
+            localStorage.removeItem("kmegle_nsfw_cooldown_until");
+          }
+        }
+      }
+
       setStatus("Requesting camera...");
 
       setIsConnecting(true);
