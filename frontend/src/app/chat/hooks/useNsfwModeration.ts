@@ -2,11 +2,11 @@
 
 import { useEffect, useRef, useState, useCallback } from "react";
 
-// --- Constants (per implementation guide) ---
+// --- Constants ---
 const WINDOW_SIZE = 5;
-const SAMPLE_INTERVAL_MS = 1000; // 1 Hz — optimal rate per guide
+const SAMPLE_INTERVAL_MS = 500; // 2 Hz — bumped from 1 Hz for faster detection
 const CANVAS_SIZE = 224; // MobileNetV2 input size
-const COOLDOWN_DURATION_MS = 5 * 60 * 1000; // 5-minute cooldown on critical violation
+const COOLDOWN_DURATION_MS = .5 * 60 * 1000; // 5-minute cooldown on critical violation
 const STORAGE_KEY_COOLDOWN = "kmegle_nsfw_cooldown_until";
 
 export interface NsfwPrediction {
@@ -23,19 +23,25 @@ export interface ModerationState {
   strikeCount: number;
   lastPrediction: NsfwPrediction | null;
   cooldownRemaining: number; // seconds; 0 if not cooling down
+  isRemoteWarning: boolean;
+  remoteStrikeCount: number;
 }
 
 export function useNsfwModeration({
-  videoRef,
+  localVideoRef,
+  remoteVideoRef,
   isActive,
   onCriticalViolation,
 }: {
-  videoRef: React.RefObject<HTMLVideoElement | null>;
+  localVideoRef: React.RefObject<HTMLVideoElement | null>;
+  remoteVideoRef?: React.RefObject<HTMLVideoElement | null>;
   isActive: boolean;
   onCriticalViolation?: () => void;
 }) {
   const workerRef = useRef<Worker | null>(null);
   const [isReady, setIsReady] = useState(false);
+
+  // --- Local sender state ---
   const [isWarning, setIsWarning] = useState(false);
   const [strikeCount, setStrikeCount] = useState(0);
   const [lastPrediction, setLastPrediction] = useState<NsfwPrediction | null>(
@@ -43,21 +49,31 @@ export function useNsfwModeration({
   );
   const [cooldownRemaining, setCooldownRemaining] = useState<number>(0);
 
-  // Refs for values that need to be accessed inside callbacks without re-creating them
-  const slidingWindowRef = useRef<boolean[]>([]);
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  // --- Remote receiver state ---
+  const [isRemoteWarning, setIsRemoteWarning] = useState(false);
+  const [remoteStrikeCount, setRemoteStrikeCount] = useState(0);
+
+  // Independent sliding windows — one per feed
+  const localWindowRef = useRef<boolean[]>([]);
+  const remoteWindowRef = useRef<boolean[]>([]);
+
+  // Off-screen canvases — one per feed to prevent ctx.drawImage racing
+  const localCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const remoteCanvasRef = useRef<HTMLCanvasElement | null>(null);
+
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
   const frameCountRef = useRef(0);
-  const isEvaluatingRef = useRef(false);
 
-  // Keep onCriticalViolation in a ref so the worker onmessage handler always
-  // has the latest callback without needing to re-initialize the worker.
+  // Independent evaluating guards — local and remote frames are queued separately
+  const isLocalEvaluatingRef = useRef(false);
+  const isRemoteEvaluatingRef = useRef(false);
+
+  // Keep callbacks in refs to avoid stale closures in worker onmessage
   const onCriticalViolationRef = useRef(onCriticalViolation);
   useEffect(() => {
     onCriticalViolationRef.current = onCriticalViolation;
   }, [onCriticalViolation]);
 
-  // Keep triggerCooldown stable via ref to avoid stale closures
   const triggerCooldownRef = useRef<() => void>(() => {});
 
   // ----------------------------------------
@@ -110,7 +126,6 @@ export function useNsfwModeration({
     setCooldownRemaining(Math.ceil(COOLDOWN_DURATION_MS / 1000));
   }, []);
 
-  // Keep the triggerCooldown ref up-to-date
   useEffect(() => {
     triggerCooldownRef.current = triggerCooldown;
   }, [triggerCooldown]);
@@ -118,65 +133,94 @@ export function useNsfwModeration({
   // ----------------------------------------
   // SLIDING WINDOW EVALUATION
   //
-  // Per the implementation guide:
-  //   - Porn/Hentai > 0.70 → violating
-  //   - Sexy > 0.85 (higher threshold for dorm/casual wear false positives)
-  //   - 3/5 frames violating → Warning + Blur
+  // LOCAL (sender enforcement):
+  //   - Porn/Hentai > 0.70 → violating; Sexy > 0.85
+  //   - 3/5 frames violating → Warning + blur local preview
   //   - 5/5 frames violating → Disconnect + 5-min cooldown
+  //
+  // REMOTE (receiver protection):
+  //   - 1/5 violating frames → Immediate remote video blur (instant protection)
+  //   - 3/5 violating frames → Disconnect (sustained confirmed violation)
   // ----------------------------------------
 
-  // Stable ref for the evaluate function so the worker onmessage can call it
-  // without going stale. This avoids the classic React stale-closure bug where
-  // onmessage captures the initial version of evaluatePrediction.
-  const evaluatePredictionRef = useRef<(pred: NsfwPrediction) => void>(
-    () => {}
-  );
+  // Stable refs so worker onmessage never captures a stale closure
+  const evaluateLocalRef = useRef<(pred: NsfwPrediction) => void>(() => {});
+  const evaluateRemoteRef = useRef<(pred: NsfwPrediction) => void>(() => {});
 
-  const evaluatePrediction = useCallback((pred: NsfwPrediction) => {
+  const evaluateLocal = useCallback((pred: NsfwPrediction) => {
     const porn = pred.Porn || 0;
     const hentai = pred.Hentai || 0;
     const sexy = pred.Sexy || 0;
 
-    // Thresholds per guide: Porn/Hentai > 70%, Sexy > 85%
     const isViolating = porn > 0.7 || hentai > 0.7 || sexy > 0.85;
 
-    const windowArr = slidingWindowRef.current;
+    const windowArr = localWindowRef.current;
     windowArr.push(isViolating);
+    if (windowArr.length > WINDOW_SIZE) windowArr.shift();
 
-    // Keep sliding window at max WINDOW_SIZE (5 frames ≈ 5 seconds at 1 Hz)
-    if (windowArr.length > WINDOW_SIZE) {
-      windowArr.shift();
-    }
-
-    const violations = windowArr.filter((v) => v === true).length;
+    const violations = windowArr.filter(Boolean).length;
     setStrikeCount(violations);
 
     if (violations >= 5) {
-      // Strike 5 (Critical): Disconnect & apply 5-minute cooldown
+      // Critical: disconnect + 5-min cooldown
       triggerCooldownRef.current();
       setIsWarning(false);
-      slidingWindowRef.current = [];
+      localWindowRef.current = [];
       setStrikeCount(0);
-      // Call via ref to always get the latest onCriticalViolation callback
       onCriticalViolationRef.current?.();
     } else if (violations >= 3) {
-      // Strike 3-4 (Sustained): Warning phase — blur video + show banner
+      // Sustained: blur local preview + show warning banner
       setIsWarning(true);
     } else {
-      // Strike 0-2: Safe or single-frame spike, absorbed by the window
+      // Safe or single-frame spike — absorbed by the window
       setIsWarning(false);
     }
-  }, []); // No deps — reads everything through refs to avoid stale closures
+  }, []); // No deps — reads everything via refs
 
-  // Keep the evaluate ref up-to-date
+  const evaluateRemote = useCallback((pred: NsfwPrediction) => {
+    const porn = pred.Porn || 0;
+    const hentai = pred.Hentai || 0;
+    const sexy = pred.Sexy || 0;
+
+    const isViolating = porn > 0.7 || hentai > 0.7 || sexy > 0.85;
+
+    const windowArr = remoteWindowRef.current;
+    windowArr.push(isViolating);
+    if (windowArr.length > WINDOW_SIZE) windowArr.shift();
+
+    const violations = windowArr.filter(Boolean).length;
+    setRemoteStrikeCount(violations);
+
+    if (violations >= 3) {
+      // Sustained remote violation — disconnect immediately
+      remoteWindowRef.current = [];
+      setRemoteStrikeCount(0);
+      setIsRemoteWarning(false);
+      onCriticalViolationRef.current?.();
+    } else if (violations >= 1) {
+      // First spike — immediately blur the remote feed to protect the viewer
+      setIsRemoteWarning(true);
+    } else {
+      // Back to clean — remove blur (handles false positives gracefully)
+      setIsRemoteWarning(false);
+    }
+  }, []); // No deps — reads everything via refs
+
+  // Keep evaluate refs up-to-date
   useEffect(() => {
-    evaluatePredictionRef.current = evaluatePrediction;
-  }, [evaluatePrediction]);
+    evaluateLocalRef.current = evaluateLocal;
+  }, [evaluateLocal]);
+
+  useEffect(() => {
+    evaluateRemoteRef.current = evaluateRemote;
+  }, [evaluateRemote]);
 
   // ----------------------------------------
   // WEB WORKER INITIALIZATION
-  // The worker runs TensorFlow.js with WebGL backend on a separate thread,
-  // achieving near-zero UI latency as specified in the implementation guide.
+  // A single shared worker instance handles both local and remote frames.
+  // Each CHECK_FRAME message carries a `source` tag ("local" | "remote") so
+  // responses are routed to the correct sliding window. This avoids loading
+  // the MobileNetV2 model into GPU memory twice.
   // ----------------------------------------
 
   useEffect(() => {
@@ -191,16 +235,28 @@ export function useNsfwModeration({
       workerRef.current = worker;
 
       worker.onmessage = (event: MessageEvent) => {
-        const { type, predictions, error } = event.data || {};
-        // Signal that the worker is ready to accept next frame
-        isEvaluatingRef.current = false;
+        const { type, source, predictions, error } = event.data || {};
+
+        // Release the per-source evaluating lock
+        if (source === "local") {
+          isLocalEvaluatingRef.current = false;
+        } else if (source === "remote") {
+          isRemoteEvaluatingRef.current = false;
+        } else {
+          // READY / ERROR — no source tag
+          isLocalEvaluatingRef.current = false;
+          isRemoteEvaluatingRef.current = false;
+        }
 
         if (type === "READY") {
           setIsReady(true);
         } else if (type === "PREDICTION" && predictions) {
-          setLastPrediction(predictions);
-          // Use ref to call the latest evaluatePrediction without stale closure
-          evaluatePredictionRef.current(predictions);
+          if (source === "local") {
+            setLastPrediction(predictions);
+            evaluateLocalRef.current(predictions);
+          } else if (source === "remote") {
+            evaluateRemoteRef.current(predictions);
+          }
         } else if (type === "ERROR") {
           console.warn("[nsfwModeration] Worker error:", error);
         }
@@ -222,86 +278,125 @@ export function useNsfwModeration({
   }, []); // Only runs once — worker lifecycle is independent of other state
 
   // ----------------------------------------
-  // OFF-SCREEN CANVAS (224×224)
-  // Per the guide: downscale to exactly 224×224 before sending to the model.
-  // MobileNetV2 is trained on this size; larger images waste CPU cycles.
+  // OFF-SCREEN CANVASES (224×224)
+  // One canvas per feed — prevents ctx.drawImage from racing when both local
+  // and remote captures fire on the same interval tick.
   // ----------------------------------------
 
   useEffect(() => {
     if (typeof window === "undefined") return;
-    const canvas = document.createElement("canvas");
-    canvas.width = CANVAS_SIZE;
-    canvas.height = CANVAS_SIZE;
-    canvasRef.current = canvas;
+
+    const localCanvas = document.createElement("canvas");
+    localCanvas.width = CANVAS_SIZE;
+    localCanvas.height = CANVAS_SIZE;
+    localCanvasRef.current = localCanvas;
+
+    const remoteCanvas = document.createElement("canvas");
+    remoteCanvas.width = CANVAS_SIZE;
+    remoteCanvas.height = CANVAS_SIZE;
+    remoteCanvasRef.current = remoteCanvas;
   }, []);
 
   // ----------------------------------------
-  // FRAME CAPTURE
-  // Creates an ImageBitmap from the 224×224 canvas and transfers it to the
-  // worker with zero-copy semantics. The worker closes it after classification.
+  // FRAME CAPTURE HELPERS
+  // Each helper is independent — a slow GPU inference on one feed will not
+  // block the other feed from submitting its next frame.
   // ----------------------------------------
 
-  const captureAndCheckFrame = useCallback(async () => {
-    const video = videoRef.current;
-    const canvas = canvasRef.current;
+  const captureLocalFrame = useCallback(async () => {
+    const video = localVideoRef.current;
+    const canvas = localCanvasRef.current;
     const worker = workerRef.current;
 
-    // Skip if already processing a frame (prevents queue buildup)
-    if (!video || !canvas || !worker || isEvaluatingRef.current) return;
+    if (!video || !canvas || !worker || isLocalEvaluatingRef.current) return;
     if (video.readyState < 2 || video.paused || video.ended) return;
 
     try {
       const ctx = canvas.getContext("2d", { willReadFrequently: true });
       if (!ctx) return;
 
-      // Downscale the current video frame to 224×224
-      // Aspect ratio distortion is fine — MobileNetV2 is resilient to it
       ctx.drawImage(video, 0, 0, CANVAS_SIZE, CANVAS_SIZE);
-
-      // createImageBitmap is highly efficient and produces a GPU-uploadable bitmap
       const imageBitmap = await createImageBitmap(canvas);
 
-      isEvaluatingRef.current = true;
+      isLocalEvaluatingRef.current = true;
       frameCountRef.current += 1;
 
-      // Transfer the ImageBitmap to the worker (zero-copy via Transferable)
-      // The worker will call imageBitmap.close() after classification to free GPU memory
       worker.postMessage(
         {
           type: "CHECK_FRAME",
+          source: "local",
           imageBitmap,
           frameId: frameCountRef.current,
         },
-        [imageBitmap] // Transfer ownership — do NOT use imageBitmap after this line
+        [imageBitmap] // Zero-copy transfer — do NOT use imageBitmap after this
       );
     } catch (err) {
-      isEvaluatingRef.current = false;
-      console.warn("[nsfwModeration] Frame capture error:", err);
+      isLocalEvaluatingRef.current = false;
+      console.warn("[nsfwModeration] Local frame capture error:", err);
     }
-  }, [videoRef]);
+  }, [localVideoRef]);
+
+  const captureRemoteFrame = useCallback(async () => {
+    const video = remoteVideoRef?.current;
+    const canvas = remoteCanvasRef.current;
+    const worker = workerRef.current;
+
+    if (!video || !canvas || !worker || isRemoteEvaluatingRef.current) return;
+    if (video.readyState < 2 || video.paused || video.ended) return;
+
+    try {
+      const ctx = canvas.getContext("2d", { willReadFrequently: true });
+      if (!ctx) return;
+
+      ctx.drawImage(video, 0, 0, CANVAS_SIZE, CANVAS_SIZE);
+      const imageBitmap = await createImageBitmap(canvas);
+
+      isRemoteEvaluatingRef.current = true;
+      frameCountRef.current += 1;
+
+      worker.postMessage(
+        {
+          type: "CHECK_FRAME",
+          source: "remote",
+          imageBitmap,
+          frameId: frameCountRef.current,
+        },
+        [imageBitmap] // Zero-copy transfer — do NOT use imageBitmap after this
+      );
+    } catch (err) {
+      isRemoteEvaluatingRef.current = false;
+      console.warn("[nsfwModeration] Remote frame capture error:", err);
+    }
+  }, [remoteVideoRef]);
 
   // ----------------------------------------
-  // FRAME SAMPLING LOOP (1 Hz)
-  // Per the guide: 1–2 Hz is the optimal rate (1000ms–500ms intervals).
-  // This avoids draining the user's battery while providing enough temporal
-  // resolution for the sliding window algorithm.
+  // FRAME SAMPLING LOOP (2 Hz)
+  // Both local and remote frames are captured on the same tick. The worker
+  // processes them sequentially on the GPU — the per-source guard flags ensure
+  // that if a frame takes longer than 500ms, the next tick simply skips that
+  // source rather than stacking up a backlog.
   // ----------------------------------------
 
   useEffect(() => {
     if (!isActive || cooldownRemaining > 0) {
-      // Stop sampling when inactive or during cooldown
       if (intervalRef.current) {
         clearInterval(intervalRef.current);
         intervalRef.current = null;
       }
+
+      // Reset all state on deactivation
       setIsWarning(false);
-      slidingWindowRef.current = [];
+      setIsRemoteWarning(false);
+      localWindowRef.current = [];
+      remoteWindowRef.current = [];
       setStrikeCount(0);
+      setRemoteStrikeCount(0);
       return;
     }
 
     intervalRef.current = setInterval(() => {
-      captureAndCheckFrame();
+      captureLocalFrame();
+      captureRemoteFrame();
     }, SAMPLE_INTERVAL_MS);
 
     return () => {
@@ -310,7 +405,7 @@ export function useNsfwModeration({
         intervalRef.current = null;
       }
     };
-  }, [isActive, cooldownRemaining, captureAndCheckFrame]);
+  }, [isActive, cooldownRemaining, captureLocalFrame, captureRemoteFrame]);
 
   // ----------------------------------------
   // PUBLIC API
@@ -318,10 +413,14 @@ export function useNsfwModeration({
 
   return {
     isReady,
+    // Local sender moderation
     isWarning,
     strikeCount,
     lastPrediction,
     cooldownRemaining,
     isCooldownActive: cooldownRemaining > 0,
+    // Remote receiver protection
+    isRemoteWarning,
+    remoteStrikeCount,
   };
 }

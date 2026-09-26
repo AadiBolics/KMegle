@@ -36,8 +36,10 @@ export default function ChatDashboard() {
     isWarning,
     isCooldownActive,
     cooldownRemaining,
+    isRemoteWarning,
   } = useNsfwModeration({
-    videoRef: localVideoRef,
+    localVideoRef,
+    remoteVideoRef,
     isActive: !!localStream,
     onCriticalViolation: () => {
       cleanupConnection();
@@ -101,6 +103,7 @@ export default function ChatDashboard() {
         status={status}
         isFullscreen={isFullscreen}
         isWarning={isWarning}
+        isRemoteWarning={isRemoteWarning}
         isCooldownActive={isCooldownActive}
         cooldownRemaining={cooldownRemaining}
         onToggleSearch={toggleSearch}

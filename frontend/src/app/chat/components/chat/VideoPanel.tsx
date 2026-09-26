@@ -11,6 +11,7 @@ interface VideoPanelProps {
   status: string;
   isFullscreen: boolean;
   isWarning?: boolean;
+  isRemoteWarning?: boolean;
   isCooldownActive?: boolean;
   cooldownRemaining?: number;
   onToggleSearch: () => void;
@@ -28,6 +29,7 @@ export default function VideoPanel({
   status,
   isFullscreen,
   isWarning = false,
+  isRemoteWarning = false,
   isCooldownActive = false,
   cooldownRemaining = 0,
   onToggleSearch,
@@ -56,9 +58,9 @@ export default function VideoPanel({
         ref={remoteVideoRef}
         autoPlay
         playsInline
-        className={`absolute inset-0 w-full h-full object-cover transform scale-x-[-1] transition-opacity duration-700 ease-in-out ${
+        className={`absolute inset-0 w-full h-full object-cover transform scale-x-[-1] transition-all duration-300 ease-in-out ${
           remoteStream ? "opacity-100 z-10" : "opacity-0 z-0"
-        }`}
+        } ${isRemoteWarning ? "blur-[32px] brightness-50 ring-4 ring-red-500/70" : ""}`}
       />
 
       {/* Local Video Preview */}
@@ -78,7 +80,7 @@ export default function VideoPanel({
         } ${isWarning ? "blur-[24px] brightness-75 ring-4 ring-amber-500/80" : ""}`}
       />
 
-      {/* Warning Phase Banner */}
+      {/* Warning Phase Banner — local sender */}
       {isWarning && (
         <div className="absolute top-4 left-1/2 -translate-x-1/2 z-40 w-[92%] max-w-lg animate-bounce">
           <div className="flex items-center gap-3 px-4 py-3 rounded-2xl bg-amber-500/20 backdrop-blur-xl border border-amber-500/40 shadow-2xl text-amber-200">
@@ -89,6 +91,22 @@ export default function VideoPanel({
             </div>
             <div className="text-xs lg:text-sm font-semibold leading-snug">
               Inappropriate content detected. Please adjust your camera immediately.
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Remote Warning Banner — stranger's feed is blurred */}
+      {isRemoteWarning && !isWarning && (
+        <div className="absolute top-4 left-1/2 -translate-x-1/2 z-40 w-[92%] max-w-lg">
+          <div className="flex items-center gap-3 px-4 py-3 rounded-2xl bg-red-500/20 backdrop-blur-xl border border-red-500/40 shadow-2xl text-red-200">
+            <div className="flex-shrink-0 w-8 h-8 rounded-full bg-red-500/30 flex items-center justify-center">
+              <svg className="w-5 h-5 text-red-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21" />
+              </svg>
+            </div>
+            <div className="text-xs lg:text-sm font-semibold leading-snug">
+              Inappropriate content from stranger detected. Feed blurred for your protection.
             </div>
           </div>
         </div>

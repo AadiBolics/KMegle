@@ -54,7 +54,7 @@ async function initModel() {
 }
 
 self.onmessage = async (event: MessageEvent) => {
-  const { type, imageBitmap, frameId } = event.data || {};
+  const { type, source, imageBitmap, frameId } = event.data || {};
 
   if (type === "INIT") {
     await initModel();
@@ -79,8 +79,11 @@ self.onmessage = async (event: MessageEvent) => {
         predMap[p.className] = p.probability;
       }
 
+      // Echo the source tag back so the hook can route this result to the
+      // correct sliding window (local sender vs. remote receiver).
       self.postMessage({
         type: "PREDICTION",
+        source,
         frameId,
         predictions: predMap,
       });
@@ -89,6 +92,7 @@ self.onmessage = async (event: MessageEvent) => {
       console.warn("NSFW classification error in worker:", e);
       self.postMessage({
         type: "ERROR",
+        source,
         frameId,
         error: e?.message || "Frame classification failed",
       });
