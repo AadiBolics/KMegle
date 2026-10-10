@@ -16,6 +16,7 @@ export default function ChatDashboard() {
     socket,
     status,
     isConnecting,
+    roomId,
     localStream,
     remoteStream,
     messages,
@@ -24,6 +25,7 @@ export default function ChatDashboard() {
     toggleSearch,
     next,
     block,
+    reportUser,
     sendMessage,
     cleanupConnection,
   } = useChatSession();
@@ -41,6 +43,8 @@ export default function ChatDashboard() {
     localVideoRef,
     remoteVideoRef,
     isActive: !!localStream,
+    socket,
+    roomId,
     onCriticalViolation: () => {
       cleanupConnection();
     },
@@ -48,6 +52,7 @@ export default function ChatDashboard() {
 
   const [isFullscreen, setIsFullscreen] = useState(false);
   const { isDarkMode, toggleDarkMode } = useTheme();
+
   useEffect(() => {
     if (localVideoRef.current && localStream) {
       localVideoRef.current.srcObject = localStream;
@@ -72,14 +77,10 @@ export default function ChatDashboard() {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  const handleExit = () => {
-    cleanupConnection();
-    router.push("/");
-  };
   const handleOpenSettings = () => {
     cleanupConnection();
-  router.push("/settings");
-};
+    router.push("/settings");
+  };
 
   return (
     <div
@@ -110,6 +111,7 @@ export default function ChatDashboard() {
         onToggleSearch={toggleSearch}
         onNext={next}
         onBlock={block}
+        onReport={reportUser}
         onToggleFullscreen={() => setIsFullscreen((value) => !value)}
       />
 

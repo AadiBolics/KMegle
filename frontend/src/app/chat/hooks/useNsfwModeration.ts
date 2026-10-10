@@ -4,10 +4,8 @@ import { useEffect, useRef, useState, useCallback } from "react";
 
 // --- Constants ---
 const WINDOW_SIZE = 5;
-const SAMPLE_INTERVAL_MS = 500; // 2 Hz — bumped from 1 Hz for faster detection
-const CANVAS_SIZE = 224; // MobileNetV2 input size
-const COOLDOWN_DURATION_MS = .5 * 60 * 1000; // 5-minute cooldown on critical violation
-const STORAGE_KEY_COOLDOWN = "kmegle_nsfw_cooldown_until";
+const SAMPLE_INTERVAL_MS = 300; // ~3.3 Hz for fast sub-second detection
+const CANVAS_SIZE = 224; // MobileNetV2 input resolution
 
 export interface NsfwPrediction {
   Drawing?: number;
@@ -22,7 +20,8 @@ export interface ModerationState {
   isWarning: boolean;
   strikeCount: number;
   lastPrediction: NsfwPrediction | null;
-  cooldownRemaining: number; // seconds; 0 if not cooling down
+  cooldownRemaining: number;
+  isCooldownActive: boolean;
   isRemoteWarning: boolean;
   remoteStrikeCount: number;
 }
@@ -31,11 +30,15 @@ export function useNsfwModeration({
   localVideoRef,
   remoteVideoRef,
   isActive,
+  socket,
+  roomId,
   onCriticalViolation,
 }: {
   localVideoRef: React.RefObject<HTMLVideoElement | null>;
   remoteVideoRef?: React.RefObject<HTMLVideoElement | null>;
   isActive: boolean;
+  socket?: any;
+  roomId?: string | null;
   onCriticalViolation?: () => void;
 }) {
   const workerRef = useRef<Worker | null>(null);
@@ -44,115 +47,130 @@ export function useNsfwModeration({
   // --- Local sender state ---
   const [isWarning, setIsWarning] = useState(false);
   const [strikeCount, setStrikeCount] = useState(0);
-  const [lastPrediction, setLastPrediction] = useState<NsfwPrediction | null>(
-    null
-  );
+  const [lastPrediction, setLastPrediction] = useState<NsfwPrediction | null>(null);
   const [cooldownRemaining, setCooldownRemaining] = useState<number>(0);
+  const cooldownEndTimeRef = useRef<number>(0);
 
   // --- Remote receiver state ---
   const [isRemoteWarning, setIsRemoteWarning] = useState(false);
   const [remoteStrikeCount, setRemoteStrikeCount] = useState(0);
 
-  // Independent sliding windows — one per feed
+  // Sliding windows — one per feed
   const localWindowRef = useRef<boolean[]>([]);
   const remoteWindowRef = useRef<boolean[]>([]);
 
-  // Off-screen canvases — one per feed to prevent ctx.drawImage racing
+  // Off-screen canvases — one per feed
   const localCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const remoteCanvasRef = useRef<HTMLCanvasElement | null>(null);
 
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
   const frameCountRef = useRef(0);
 
-  // Independent evaluating guards — local and remote frames are queued separately
+  // Evaluation guards
   const isLocalEvaluatingRef = useRef(false);
   const isRemoteEvaluatingRef = useRef(false);
 
-  // Keep callbacks in refs to avoid stale closures in worker onmessage
+  // Stable references for socket, room and callbacks
+  const socketRef = useRef(socket);
+  useEffect(() => {
+    socketRef.current = socket;
+  }, [socket]);
+
+  const roomIdRef = useRef(roomId);
+  useEffect(() => {
+    roomIdRef.current = roomId;
+  }, [roomId]);
+
   const onCriticalViolationRef = useRef(onCriticalViolation);
   useEffect(() => {
     onCriticalViolationRef.current = onCriticalViolation;
   }, [onCriticalViolation]);
 
-  const triggerCooldownRef = useRef<() => void>(() => {});
+  // Start cooldown with exact timestamp
+  const startCooldown = useCallback((seconds: number) => {
+    cooldownEndTimeRef.current = Date.now() + seconds * 1000;
+    setCooldownRemaining(seconds);
+  }, []);
 
-  // ----------------------------------------
-  // COOLDOWN MANAGEMENT
-  // ----------------------------------------
+  // Server-side cooldown listener
+  useEffect(() => {
+    if (!socket) return;
 
-  const checkCooldown = useCallback(() => {
-    if (typeof window === "undefined") return 0;
-    try {
-      const stored = localStorage.getItem(STORAGE_KEY_COOLDOWN);
-      if (stored) {
-        const expiry = parseInt(stored, 10);
-        const remaining = Math.max(0, Math.ceil((expiry - Date.now()) / 1000));
-        if (remaining > 0) {
-          return remaining;
-        } else {
-          localStorage.removeItem(STORAGE_KEY_COOLDOWN);
-        }
+    const handleCooldown = (data: { remaining: number }) => {
+      if (data?.remaining && data.remaining > 0) {
+        startCooldown(data.remaining);
       }
-    } catch {
-      // localStorage may be unavailable in some environments
-    }
-    return 0;
-  }, []);
+    };
 
-  // Cooldown countdown timer
+    socket.on("cooldown_active", handleCooldown);
+    return () => {
+      socket.off("cooldown_active", handleCooldown);
+    };
+  }, [socket, startCooldown]);
+
+  // Rock-solid timestamp-based countdown timer: immune to render cycles
   useEffect(() => {
-    const remaining = checkCooldown();
-    setCooldownRemaining(remaining);
+    if (cooldownRemaining <= 0) return;
 
-    if (remaining > 0) {
-      const timer = setInterval(() => {
-        const rem = checkCooldown();
-        setCooldownRemaining(rem);
-        if (rem <= 0) {
-          clearInterval(timer);
-        }
-      }, 1000);
-      return () => clearInterval(timer);
-    }
-  }, [checkCooldown]);
+    const timer = setInterval(() => {
+      const now = Date.now();
+      const left = Math.max(0, Math.ceil((cooldownEndTimeRef.current - now) / 1000));
+      setCooldownRemaining(left);
+      if (left <= 0) {
+        clearInterval(timer);
+      }
+    }, 500);
 
-  const triggerCooldown = useCallback(() => {
-    const expiry = Date.now() + COOLDOWN_DURATION_MS;
-    try {
-      localStorage.setItem(STORAGE_KEY_COOLDOWN, expiry.toString());
-    } catch {
-      // Ignore storage errors
-    }
-    setCooldownRemaining(Math.ceil(COOLDOWN_DURATION_MS / 1000));
-  }, []);
-
-  useEffect(() => {
-    triggerCooldownRef.current = triggerCooldown;
-  }, [triggerCooldown]);
+    return () => clearInterval(timer);
+  }, [cooldownRemaining > 0]); // Only re-run when cooldown status toggles
 
   // ----------------------------------------
-  // SLIDING WINDOW EVALUATION
-  //
-  // LOCAL (sender enforcement):
-  //   - Porn/Hentai > 0.70 → violating; Sexy > 0.85
-  //   - 3/5 frames violating → Warning + blur local preview
-  //   - 5/5 frames violating → Disconnect + 5-min cooldown
-  //
-  // REMOTE (receiver protection):
-  //   - 1/5 violating frames → Immediate remote video blur (instant protection)
-  //   - 3/5 violating frames → Disconnect (sustained confirmed violation)
+  // CALIBRATED CONTENT EVALUATION
+  // Eliminates false positives on ceiling fans, blank walls, & textures
+  // while rapidly catching nudity on mobile screens and webcam feeds
   // ----------------------------------------
 
-  // Stable refs so worker onmessage never captures a stale closure
-  const evaluateLocalRef = useRef<(pred: NsfwPrediction) => void>(() => {});
-  const evaluateRemoteRef = useRef<(pred: NsfwPrediction) => void>(() => {});
+  const checkIsViolating = (pred: NsfwPrediction): boolean => {
+    const porn = pred.Porn || 0;
+    const sexy = pred.Sexy || 0;
+    const hentai = pred.Hentai || 0;
+    const neutral = pred.Neutral || 0;
+
+    // Rule 1: A ceiling fan, blank wall, or clean room has high neutral and no explicit signals
+    if (neutral >= 0.50 && porn < 0.20 && sexy < 0.30) {
+      return false;
+    }
+
+    // Rule 2: In a live webcam video chat, nudity requires Porn or Sexy features.
+    // Fan blades, ceiling patterns, and line geometry mistake for anime/drawing lines.
+    // If both Porn and Sexy are very low, it must NEVER flag.
+    if (porn < 0.18 && sexy < 0.25) {
+      if (hentai > 0.85 && neutral < 0.15) {
+        return true;
+      }
+      return false;
+    }
+
+    // Rule 3: Direct explicit nudity or sexual content (including phone screens / photos)
+    if (porn > 0.35) {
+      return true;
+    }
+
+    // Rule 4: Combined suggestive + porn on phone screen or webcam with reduced neutral
+    if (porn + sexy > 0.45 && neutral < 0.45) {
+      return true;
+    }
+
+    // Rule 5: Weighted explicit confidence
+    if (porn * 1.5 + sexy > 0.55) {
+      return true;
+    }
+
+    return false;
+  };
 
   const evaluateLocal = useCallback((pred: NsfwPrediction) => {
-    const porn = pred.Porn || 0;
-    const hentai = pred.Hentai || 0;
-    const sexy = pred.Sexy || 0;
-
-    const isViolating = porn > 0.7 || hentai > 0.7 || sexy > 0.85;
+    const isViolating = checkIsViolating(pred);
 
     const windowArr = localWindowRef.current;
     windowArr.push(isViolating);
@@ -161,28 +179,25 @@ export function useNsfwModeration({
     const violations = windowArr.filter(Boolean).length;
     setStrikeCount(violations);
 
-    if (violations >= 5) {
-      // Critical: disconnect + 5-min cooldown
-      triggerCooldownRef.current();
+    if (violations >= 3) {
+      // Sustained critical violation: trigger 30s cooldown and notify server
+      console.warn("🚨 Critical NSFW violation detected on local feed");
+      startCooldown(30);
       setIsWarning(false);
       localWindowRef.current = [];
       setStrikeCount(0);
+      socketRef.current?.emit("report_nsfw_violation", { roomId: roomIdRef.current });
       onCriticalViolationRef.current?.();
-    } else if (violations >= 3) {
-      // Sustained: blur local preview + show warning banner
+    } else if (violations >= 1) {
+      // Instant reaction: blur local preview immediately on first detected frame!
       setIsWarning(true);
     } else {
-      // Safe or single-frame spike — absorbed by the window
       setIsWarning(false);
     }
-  }, []); // No deps — reads everything via refs
+  }, [startCooldown]);
 
   const evaluateRemote = useCallback((pred: NsfwPrediction) => {
-    const porn = pred.Porn || 0;
-    const hentai = pred.Hentai || 0;
-    const sexy = pred.Sexy || 0;
-
-    const isViolating = porn > 0.7 || hentai > 0.7 || sexy > 0.85;
+    const isViolating = checkIsViolating(pred);
 
     const windowArr = remoteWindowRef.current;
     windowArr.push(isViolating);
@@ -191,36 +206,34 @@ export function useNsfwModeration({
     const violations = windowArr.filter(Boolean).length;
     setRemoteStrikeCount(violations);
 
-    if (violations >= 3) {
-      // Sustained remote violation — disconnect immediately
+    if (violations >= 2) {
+      // Sustained remote violation: disconnect and report peer to server
+      console.warn("🚨 Sustained NSFW violation detected on remote feed");
       remoteWindowRef.current = [];
       setRemoteStrikeCount(0);
       setIsRemoteWarning(false);
+      socketRef.current?.emit("report_peer_nsfw_violation", { roomId: roomIdRef.current });
       onCriticalViolationRef.current?.();
     } else if (violations >= 1) {
-      // First spike — immediately blur the remote feed to protect the viewer
+      // Instant protection: blur remote feed on first detection
       setIsRemoteWarning(true);
     } else {
-      // Back to clean — remove blur (handles false positives gracefully)
       setIsRemoteWarning(false);
     }
-  }, []); // No deps — reads everything via refs
+  }, []);
 
-  // Keep evaluate refs up-to-date
+  const evaluateLocalRef = useRef(evaluateLocal);
   useEffect(() => {
     evaluateLocalRef.current = evaluateLocal;
   }, [evaluateLocal]);
 
+  const evaluateRemoteRef = useRef(evaluateRemote);
   useEffect(() => {
     evaluateRemoteRef.current = evaluateRemote;
   }, [evaluateRemote]);
 
   // ----------------------------------------
   // WEB WORKER INITIALIZATION
-  // A single shared worker instance handles both local and remote frames.
-  // Each CHECK_FRAME message carries a `source` tag ("local" | "remote") so
-  // responses are routed to the correct sliding window. This avoids loading
-  // the MobileNetV2 model into GPU memory twice.
   // ----------------------------------------
 
   useEffect(() => {
@@ -237,13 +250,11 @@ export function useNsfwModeration({
       worker.onmessage = (event: MessageEvent) => {
         const { type, source, predictions, error } = event.data || {};
 
-        // Release the per-source evaluating lock
         if (source === "local") {
           isLocalEvaluatingRef.current = false;
         } else if (source === "remote") {
           isRemoteEvaluatingRef.current = false;
         } else {
-          // READY / ERROR — no source tag
           isLocalEvaluatingRef.current = false;
           isRemoteEvaluatingRef.current = false;
         }
@@ -275,12 +286,10 @@ export function useNsfwModeration({
       workerRef.current?.terminate();
       workerRef.current = null;
     };
-  }, []); // Only runs once — worker lifecycle is independent of other state
+  }, []);
 
   // ----------------------------------------
-  // OFF-SCREEN CANVASES (224×224)
-  // One canvas per feed — prevents ctx.drawImage from racing when both local
-  // and remote captures fire on the same interval tick.
+  // OFF-SCREEN CANVASES
   // ----------------------------------------
 
   useEffect(() => {
@@ -298,9 +307,8 @@ export function useNsfwModeration({
   }, []);
 
   // ----------------------------------------
-  // FRAME CAPTURE HELPERS
-  // Each helper is independent — a slow GPU inference on one feed will not
-  // block the other feed from submitting its next frame.
+  // FOCUSED 65% CENTER-CROP CAPTURE
+  // Magnifies center where users hold phones/photos while maintaining natural aspect ratio
   // ----------------------------------------
 
   const captureLocalFrame = useCallback(async () => {
@@ -315,7 +323,16 @@ export function useNsfwModeration({
       const ctx = canvas.getContext("2d", { willReadFrequently: true });
       if (!ctx) return;
 
-      ctx.drawImage(video, 0, 0, CANVAS_SIZE, CANVAS_SIZE);
+      const vWidth = video.videoWidth || 640;
+      const vHeight = video.videoHeight || 480;
+      const minDim = Math.min(vWidth, vHeight);
+
+      // 65% center crop directly captures the user & any handheld phone/tablet/photo
+      const cropSize = minDim * 0.65;
+      const sx = (vWidth - cropSize) / 2;
+      const sy = (vHeight - cropSize) / 2;
+
+      ctx.drawImage(video, sx, sy, cropSize, cropSize, 0, 0, CANVAS_SIZE, CANVAS_SIZE);
       const imageBitmap = await createImageBitmap(canvas);
 
       isLocalEvaluatingRef.current = true;
@@ -328,7 +345,7 @@ export function useNsfwModeration({
           imageBitmap,
           frameId: frameCountRef.current,
         },
-        [imageBitmap] // Zero-copy transfer — do NOT use imageBitmap after this
+        [imageBitmap]
       );
     } catch (err) {
       isLocalEvaluatingRef.current = false;
@@ -348,7 +365,15 @@ export function useNsfwModeration({
       const ctx = canvas.getContext("2d", { willReadFrequently: true });
       if (!ctx) return;
 
-      ctx.drawImage(video, 0, 0, CANVAS_SIZE, CANVAS_SIZE);
+      const vWidth = video.videoWidth || 640;
+      const vHeight = video.videoHeight || 480;
+      const minDim = Math.min(vWidth, vHeight);
+
+      const cropSize = minDim * 0.65;
+      const sx = (vWidth - cropSize) / 2;
+      const sy = (vHeight - cropSize) / 2;
+
+      ctx.drawImage(video, sx, sy, cropSize, cropSize, 0, 0, CANVAS_SIZE, CANVAS_SIZE);
       const imageBitmap = await createImageBitmap(canvas);
 
       isRemoteEvaluatingRef.current = true;
@@ -361,7 +386,7 @@ export function useNsfwModeration({
           imageBitmap,
           frameId: frameCountRef.current,
         },
-        [imageBitmap] // Zero-copy transfer — do NOT use imageBitmap after this
+        [imageBitmap]
       );
     } catch (err) {
       isRemoteEvaluatingRef.current = false;
@@ -370,11 +395,7 @@ export function useNsfwModeration({
   }, [remoteVideoRef]);
 
   // ----------------------------------------
-  // FRAME SAMPLING LOOP (2 Hz)
-  // Both local and remote frames are captured on the same tick. The worker
-  // processes them sequentially on the GPU — the per-source guard flags ensure
-  // that if a frame takes longer than 500ms, the next tick simply skips that
-  // source rather than stacking up a backlog.
+  // FRAME SAMPLING LOOP (~3.3 Hz)
   // ----------------------------------------
 
   useEffect(() => {
@@ -384,7 +405,6 @@ export function useNsfwModeration({
         intervalRef.current = null;
       }
 
-      // Reset all state on deactivation
       setIsWarning(false);
       setIsRemoteWarning(false);
       localWindowRef.current = [];
@@ -405,7 +425,7 @@ export function useNsfwModeration({
         intervalRef.current = null;
       }
     };
-  }, [isActive, cooldownRemaining, captureLocalFrame, captureRemoteFrame]);
+  }, [isActive, cooldownRemaining > 0, captureLocalFrame, captureRemoteFrame]);
 
   // ----------------------------------------
   // PUBLIC API
@@ -413,13 +433,11 @@ export function useNsfwModeration({
 
   return {
     isReady,
-    // Local sender moderation
     isWarning,
     strikeCount,
     lastPrediction,
     cooldownRemaining,
     isCooldownActive: cooldownRemaining > 0,
-    // Remote receiver protection
     isRemoteWarning,
     remoteStrikeCount,
   };

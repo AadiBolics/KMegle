@@ -2,6 +2,7 @@ const express = require("express");
 
 const db = require("../config/db");
 const adminAuth = require("../middleware/adminAuth");
+const roomService = require("../services/roomService");
 
 const router = express.Router();
 
@@ -82,6 +83,18 @@ router.post(
         if (io) {
           for (const [socketId, s] of io.sockets.sockets.entries()) {
             if (s.user?.uid === userId) {
+              // Notify any paired stranger in active rooms
+              const rooms = roomService.getRoomsForSocket(s.id);
+              for (const roomId of rooms) {
+                const otherUser = roomService.getOtherUser(roomId, s.id);
+                if (otherUser) {
+                  io.to(otherUser.socketId).emit("stranger_disconnected", {
+                    reason: "Stranger disconnected.",
+                  });
+                }
+                roomService.deleteRoom(roomId);
+              }
+
               s.emit("banned_alert", {
                 message: "Your account has been suspended by an administrator.",
               });

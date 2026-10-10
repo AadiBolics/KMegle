@@ -50,6 +50,7 @@ export function useChatSession() {
   const peerConnectionRef = useRef<RTCPeerConnection | null>(null);
   const pendingCandidates = useRef<RTCIceCandidateInit[]>([]);
   const dataChannelRef = useRef<RTCDataChannel | null>(null);
+  const connectionTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [chatInput, setChatInput] = useState("");
@@ -79,6 +80,11 @@ export function useChatSession() {
   // ----------------------------------------
 
   const clearPeerConnection = useCallback(() => {
+    if (connectionTimeoutRef.current) {
+      clearTimeout(connectionTimeoutRef.current);
+      connectionTimeoutRef.current = null;
+    }
+
     peerConnectionRef.current?.close();
     peerConnectionRef.current = null;
 
@@ -140,7 +146,17 @@ export function useChatSession() {
         ? `${process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:5000"}/api/turn-credentials`
         : "/api/backend/turn-credentials";
 
-      const response = await fetch(url);
+      const headers: Record<string, string> = {};
+      if (user) {
+        try {
+          const token = await user.getIdToken();
+          headers["Authorization"] = `Bearer ${token}`;
+        } catch (e) {
+          console.warn("Could not get auth token for TURN credentials:", e);
+        }
+      }
+
+      const response = await fetch(url, { headers });
 
       const turnData = await response.json();
 
@@ -274,6 +290,37 @@ export function useChatSession() {
         }
       };
 
+      pc.onconnectionstatechange = () => {
+        console.log("📡 WebRTC Connection State:", pc.connectionState);
+        if (pc.connectionState === "connected") {
+          if (connectionTimeoutRef.current) {
+            clearTimeout(connectionTimeoutRef.current);
+            connectionTimeoutRef.current = null;
+          }
+          setStatus("Connected! Video active.");
+        } else if (
+          pc.connectionState === "disconnected" ||
+          pc.connectionState === "failed" ||
+          pc.connectionState === "closed"
+        ) {
+          setStatus("Stranger disconnected. Click Next for someone new.");
+          setRemoteStream(null);
+          remoteStreamRef.current = null;
+        }
+      };
+
+      pc.oniceconnectionstatechange = () => {
+        console.log("🧊 WebRTC ICE State:", pc.iceConnectionState);
+        if (
+          pc.iceConnectionState === "failed" ||
+          pc.iceConnectionState === "disconnected"
+        ) {
+          setStatus("Connection lost. Click Next for someone new.");
+          setRemoteStream(null);
+          remoteStreamRef.current = null;
+        }
+      };
+
       return pc;
     },
     [clearPeerConnection],
@@ -382,6 +429,18 @@ export function useChatSession() {
       });
 
       // ------------------------------------
+      // COOLDOWN ACTIVE
+      // ------------------------------------
+
+      newSocket.on("cooldown_active", () => {
+        setStatus(
+          "⏳ Temporarily on cooldown for content violations."
+        );
+        setIsConnecting(false);
+        cleanupConnection();
+      });
+
+      // ------------------------------------
       // MATCH FOUND
       // ------------------------------------
 
@@ -407,6 +466,19 @@ export function useChatSession() {
             roomIdRef.current = data.roomId;
 
             pendingCandidates.current = [];
+
+            // Guard: timeout if partner never finishes WebRTC negotiation
+            if (connectionTimeoutRef.current) {
+              clearTimeout(connectionTimeoutRef.current);
+            }
+            connectionTimeoutRef.current = setTimeout(() => {
+              if (!remoteStreamRef.current && peerConnectionRef.current?.connectionState !== "connected") {
+                console.warn("⏱️ WebRTC connection timeout reached");
+                setStatus("Stranger disconnected or failed to connect. Click Next for someone new.");
+                clearPeerConnection();
+                setRemoteStream(null);
+              }
+            }, 12000);
 
             setMessages([
               {
@@ -678,17 +750,21 @@ export function useChatSession() {
 
       newSocket.on(
         "stranger_disconnected",
-        () => {
-          setStatus(
-            "Stranger disconnected. Click Next for someone new.",
-          );
+        (data?: { reason?: string }) => {
+          if (connectionTimeoutRef.current) {
+            clearTimeout(connectionTimeoutRef.current);
+            connectionTimeoutRef.current = null;
+          }
+
+          const msg = data?.reason || "Stranger disconnected. Click Next for someone new.";
+          setStatus(msg);
 
           setMessages((prev) => [
             ...prev,
             {
               sender: "system",
               text:
-                "The stranger has disconnected.",
+                data?.reason || "The stranger has disconnected.",
             },
           ]);
 
@@ -931,6 +1007,18 @@ export function useChatSession() {
     });
   }, []);
 
+  const reportUser = useCallback((reason: string = "Inappropriate content / behavior") => {
+    const activeSocket = socketRef.current;
+    if (!activeSocket || !roomIdRef.current) return;
+
+    setStatus("Reporting user...");
+    activeSocket.emit("report_user", {
+      roomId: roomIdRef.current,
+      reason,
+    });
+    cleanupConnection();
+  }, [cleanupConnection]);
+
   // ----------------------------------------
   // SEND MESSAGE
   // ----------------------------------------
@@ -985,6 +1073,7 @@ export function useChatSession() {
     toggleSearch,
     next,
     block,
+    reportUser,
     sendMessage,
     cleanupConnection,
   };

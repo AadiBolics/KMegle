@@ -18,6 +18,7 @@ interface VideoPanelProps {
   onToggleSearch: () => void;
   onNext: () => void;
   onBlock: () => void;
+  onReport?: () => void;
   onToggleFullscreen: () => void;
 }
 
@@ -37,6 +38,7 @@ export default function VideoPanel({
   onToggleSearch,
   onNext,
   onBlock,
+  onReport,
   onToggleFullscreen,
 }: VideoPanelProps) {
   const isBusy = isConnecting || socketConnected;
@@ -173,7 +175,11 @@ export default function VideoPanel({
 
       {!remoteStream && !isCooldownActive && (
         <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none z-20 px-4 text-center">
-          {(socketConnected || isConnecting) ? (
+          {(socketConnected || isConnecting) &&
+          !status.includes("disconnected") &&
+          !status.includes("lost") &&
+          !status.includes("timed out") &&
+          !status.includes("failed") ? (
             <>
               <div className="w-12 h-12 lg:w-16 lg:h-16 border-4 border-indigo-500/30 border-t-indigo-500 rounded-full animate-spin mb-4 lg:mb-6 shadow-[0_0_30px_rgba(99,102,241,0.5)]" />
               <p className="text-indigo-200 font-medium tracking-wide animate-pulse text-xs lg:text-base">
@@ -183,14 +189,8 @@ export default function VideoPanel({
           ) : (
             <>
               <p className="text-gray-300 font-medium tracking-wide text-sm lg:text-base drop-shadow-md">
-                Click Start to begin matching.
+                {status || "Click Start to begin matching."}
               </p>
-              {/* Show error/info status even when disconnected */}
-              {status && status !== "Ready to connect." && (
-                <p className="mt-2 text-red-400 font-medium text-xs lg:text-sm drop-shadow-md max-w-xs">
-                  {status}
-                </p>
-              )}
             </>
           )}
         </div>
@@ -241,6 +241,16 @@ export default function VideoPanel({
             >
               Block
             </button>
+
+            {onReport && (
+              <button
+                onClick={onReport}
+                className="bg-rose-500/20 hover:bg-rose-500/40 text-rose-300 px-3.5 lg:px-4 py-2.5 lg:py-3 rounded-full font-bold text-xs lg:text-sm transition-all border border-rose-500/30 whitespace-nowrap"
+                title="Report User"
+              >
+                Report
+              </button>
+            )}
 
             <button
               onClick={onToggleFullscreen}
