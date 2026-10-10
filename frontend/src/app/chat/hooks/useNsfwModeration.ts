@@ -3,9 +3,11 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 
 // --- Constants ---
-const WINDOW_SIZE = 5;
-const SAMPLE_INTERVAL_MS = 300; // ~3.3 Hz for fast sub-second detection
-const CANVAS_SIZE = 224; // MobileNetV2 input resolution
+const WINDOW_SIZE = 6;           // Sliding window of 6 frames (~1.8 s at 3.3 Hz)
+const BAN_THRESHOLD = 4;         // Violations needed in window to trigger a ban (was 3/5)
+const WARN_THRESHOLD = 2;        // Violations needed to show a warning blur (was 1/5)
+const SAMPLE_INTERVAL_MS = 300;  // ~3.3 Hz for fast sub-second detection
+const CANVAS_SIZE = 224;         // MobileNetV2 input resolution
 
 export interface NsfwPrediction {
   Drawing?: number;
@@ -179,8 +181,8 @@ export function useNsfwModeration({
     const violations = windowArr.filter(Boolean).length;
     setStrikeCount(violations);
 
-    if (violations >= 3) {
-      // Sustained critical violation: trigger 30s cooldown and notify server
+    if (violations >= BAN_THRESHOLD) {
+      // Sustained critical violation (4+ of last 6 frames): trigger 30s cooldown
       console.warn("🚨 Critical NSFW violation detected on local feed");
       startCooldown(30);
       setIsWarning(false);
@@ -188,10 +190,11 @@ export function useNsfwModeration({
       setStrikeCount(0);
       socketRef.current?.emit("report_nsfw_violation", { roomId: roomIdRef.current });
       onCriticalViolationRef.current?.();
-    } else if (violations >= 1) {
-      // Instant reaction: blur local preview immediately on first detected frame!
+    } else if (violations >= WARN_THRESHOLD) {
+      // 2+ violations in window: show warning blur (not a ban yet)
       setIsWarning(true);
     } else {
+      // 0–1 violations: clear — ceiling fans, walls, textures land here
       setIsWarning(false);
     }
   }, [startCooldown]);

@@ -385,14 +385,8 @@ export function useChatSession() {
         newSocket.emit("find_match");
       });
       const handleUserBlocked = () => {
-        console.log("🛑 User blocked successfully");
-
-        resetForNextMatch();
-
-        setStatus(
-          "User blocked. Finding someone new..."
-        );
-
+        console.log("🛑 user_blocked ack received — entering matchmaking queue");
+        // State was already reset optimistically in block(); just re-enter the queue
         newSocket.emit("find_match");
       };
 
@@ -783,7 +777,6 @@ export function useChatSession() {
       clearPeerConnection,
       createPeerConnection,
       setupDataChannel,
-      resetForNextMatch,
     ],
   );
 
@@ -1000,12 +993,24 @@ export function useChatSession() {
       return;
     }
 
-    setStatus("Blocking user...");
+    // Optimistically reset connection state NOW so the UI immediately
+    // reflects that we are no longer connected (no "Connected! Video active").
+    const blockedRoomId = roomIdRef.current;
+    clearPeerConnection();
+    setRemoteStream(null);
+    remoteStreamRef.current = null;
+    setRoomId(null);
+    roomIdRef.current = null;
+    setMessages([
+      { sender: "system", text: "User blocked. Looking for someone new..." },
+    ]);
+    setStatus("User blocked. Looking for someone new...");
 
+    // Let the server know — the ack (user_blocked) will then emit find_match
     activeSocket.emit("block_user", {
-      roomId: roomIdRef.current,
+      roomId: blockedRoomId,
     });
-  }, []);
+  }, [clearPeerConnection]);
 
   const reportUser = useCallback((reason: string = "Inappropriate content / behavior") => {
     const activeSocket = socketRef.current;
