@@ -292,6 +292,10 @@ export function useChatSession() {
 
       pc.onconnectionstatechange = () => {
         console.log("📡 WebRTC Connection State:", pc.connectionState);
+        // If roomId was already cleared (block/skip/disconnect happened),
+        // ignore any further state changes from this closing PC.
+        if (!roomIdRef.current) return;
+
         if (pc.connectionState === "connected") {
           if (connectionTimeoutRef.current) {
             clearTimeout(connectionTimeoutRef.current);
@@ -311,6 +315,8 @@ export function useChatSession() {
 
       pc.oniceconnectionstatechange = () => {
         console.log("🧊 WebRTC ICE State:", pc.iceConnectionState);
+        if (!roomIdRef.current) return;
+
         if (
           pc.iceConnectionState === "failed" ||
           pc.iceConnectionState === "disconnected"

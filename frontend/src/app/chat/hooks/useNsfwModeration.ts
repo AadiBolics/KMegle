@@ -137,34 +137,37 @@ export function useNsfwModeration({
     const sexy = pred.Sexy || 0;
     const hentai = pred.Hentai || 0;
     const neutral = pred.Neutral || 0;
+    const drawing = pred.Drawing || 0;
 
-    // Rule 1: A ceiling fan, blank wall, or clean room has high neutral and no explicit signals
-    if (neutral >= 0.50 && porn < 0.20 && sexy < 0.30) {
+    // Early exit: strong neutral / drawing signal means the frame is clearly safe
+    // (ceiling, wall, fan, desk, background — all score high neutral)
+    if (neutral + drawing >= 0.55) {
       return false;
     }
 
-    // Rule 2: In a live webcam video chat, nudity requires Porn or Sexy features.
-    // Fan blades, ceiling patterns, and line geometry mistake for anime/drawing lines.
-    // If both Porn and Sexy are very low, it must NEVER flag.
-    if (porn < 0.18 && sexy < 0.25) {
-      if (hentai > 0.85 && neutral < 0.15) {
+    // Rule 1: Neutral is dominant and explicit signals are very low — safe
+    if (neutral >= 0.40 && porn < 0.20 && sexy < 0.25) {
+      return false;
+    }
+
+    // Rule 2: Both Porn and Sexy are too low to be real nudity — safe
+    // (covers ceiling fans, geometric patterns that confuse the model)
+    if (porn < 0.20 && sexy < 0.28) {
+      // Only exception: extreme hentai with almost no neutral context
+      if (hentai > 0.90 && neutral < 0.10) {
         return true;
       }
       return false;
     }
 
-    // Rule 3: Direct explicit nudity or sexual content (including phone screens / photos)
-    if (porn > 0.35) {
+    // Rule 3: High-confidence direct explicit nudity
+    if (porn > 0.45) {
       return true;
     }
 
-    // Rule 4: Combined suggestive + porn on phone screen or webcam with reduced neutral
-    if (porn + sexy > 0.45 && neutral < 0.45) {
-      return true;
-    }
-
-    // Rule 5: Weighted explicit confidence
-    if (porn * 1.5 + sexy > 0.55) {
+    // Rule 4: Strong combined suggestive + explicit signal with low neutral context
+    // Requires BOTH porn AND sexy to be elevated, not just one
+    if (porn > 0.25 && sexy > 0.25 && neutral < 0.40 && porn + sexy > 0.55) {
       return true;
     }
 
