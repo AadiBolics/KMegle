@@ -1,3 +1,4 @@
+const crypto = require("crypto");
 const Node = require("./Node");
 const dbService = require("../services/dbService");
 const roomService = require("../services/roomService");
@@ -102,6 +103,11 @@ class MatchmakerQueue {
             );
           }
 
+          // KMEGLE-SEC-010: Ensure neither user disconnected or was matched during async DB lookup
+          if (!this.nodesMap.has(user1.socket.id) || !this.nodesMap.has(user2.socket.id)) {
+            break;
+          }
+
           if (!hasBlocked) {
             foundMatch = true;
             break;
@@ -114,7 +120,7 @@ class MatchmakerQueue {
           user2 = user2.next;
         }
 
-        if (!foundMatch || !user2) {
+        if (!foundMatch || !user2 || !this.nodesMap.has(user1.socket.id) || !this.nodesMap.has(user2.socket.id)) {
           this.rotateHeadToTail();
           attempts++;
           continue;
@@ -125,13 +131,21 @@ class MatchmakerQueue {
         this.remove(user1.socket.id);
         this.remove(user2.socket.id);
 
-        const roomId = `room_${user1.socket.id}_${user2.socket.id}`;
+        // KMEGLE-SEC-023: Use unguessable cryptographically secure UUIDs instead of predictable socket IDs
+        const roomId = crypto.randomUUID();
+        // KMEGLE-SEC-014: Session nonce to prevent cross-session WebRTC race conditions
+        const sessionNonce = crypto.randomUUID();
 
         roomService.createRoom(
           roomId,
           user1,
           user2
         );
+
+        const roomObj = roomService.getRoom(roomId);
+        if (roomObj) {
+          roomObj.sessionNonce = sessionNonce;
+        }
 
         // Remove stale rooms
         [user1.socket, user2.socket].forEach((socket) => {
@@ -147,15 +161,17 @@ class MatchmakerQueue {
         user1.socket.emit("match_found", {
           role: "initiator",
           roomId,
+          sessionNonce,
         });
 
         user2.socket.emit("match_found", {
           role: "responder",
           roomId,
+          sessionNonce,
         });
 
         console.log(
-          ` Match created: ${user1.userId} and ${user2.userId}`
+          ` Match created [Room ${roomId}]: ${user1.userId} and ${user2.userId}`
         );
       }
     } finally {

@@ -1,8 +1,9 @@
 const express = require("express");
+const httpFirebaseAuth = require("../middleware/httpFIrebaseAuth");
 
 const router = express.Router();
 
-router.get("/", async (req, res) => {
+router.get("/", httpFirebaseAuth, async (req, res) => {
   const apiKey = process.env.TURN_API_KEY;
 
   if (!apiKey) {
@@ -38,7 +39,8 @@ router.get("/", async (req, res) => {
       await response.json();
 
     console.log(
-      "✅ Fresh TURN credentials fetched from Metered."
+      "✅ Fresh TURN credentials fetched from Metered for user:",
+      req.user?.email
     );
 
     res.json({

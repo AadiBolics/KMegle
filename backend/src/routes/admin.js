@@ -35,6 +35,27 @@ router.get(
   }
 );
 
+// Fetch user reports
+router.get(
+  "/reports",
+  adminAuth,
+  async (req, res) => {
+    try {
+      const result = await db.query(`
+        SELECT id, reporter_id, reported_id, reason, status, created_at
+        FROM reports
+        ORDER BY created_at DESC
+        LIMIT 100
+      `);
+
+      res.json(result.rows);
+    } catch (err) {
+      console.error("❌ Error fetching reports:", err);
+      res.status(500).json({ error: "Database error" });
+    }
+  }
+);
+
 // Toggle ban status
 router.post(
   "/ban",
@@ -54,6 +75,24 @@ router.post(
         `,
         [banStatus, userId]
       );
+
+      // KMEGLE-SEC-006: Immediately disconnect active socket sessions if banned
+      if (banStatus) {
+        const io = req.app.get("io");
+        if (io) {
+          for (const [socketId, s] of io.sockets.sockets.entries()) {
+            if (s.user?.uid === userId) {
+              s.emit("banned_alert", {
+                message: "Your account has been suspended by an administrator.",
+              });
+              s.disconnect(true);
+              console.log(
+                `🔨 Disconnected live session for banned user ${userId} (${socketId})`
+              );
+            }
+          }
+        }
+      }
 
       res.json({
         success: true,

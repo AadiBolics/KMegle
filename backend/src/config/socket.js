@@ -13,14 +13,15 @@ function createSocketServer(server) {
   ];
 
   const io = new Server(server, {
+    maxHttpBufferSize: 65536, // KMEGLE-SEC-003: 64 KB limit to prevent memory exhaustion DoS
     cors: {
       origin: (origin, callback) => {
-        // Allow requests with no origin (e.g. mobile apps, curl, UptimeRobot)
+        // Allow mobile apps, curl, server-side health checks
         if (!origin) return callback(null, true);
 
+        // KMEGLE-SEC-012: Strict whitelist without wildcards
         if (
           allowedOrigins.includes(origin) ||
-          origin.endsWith(".vercel.app") ||
           /^https?:\/\/localhost(:\d+)?$/.test(origin)
         ) {
           return callback(null, true);
@@ -35,44 +36,46 @@ function createSocketServer(server) {
   });
 
   io.engine.on("connection_error", (err) => {
-    console.error("❌ ENGINE CONNECTION ERROR");
-    console.error("message:", err.message);
-    console.error("code:", err.code);
-    console.error("context:", err.context);
+    console.error("❌ ENGINE CONNECTION ERROR:", err.message);
   });
 
   // Step 1: Firebase authentication
   io.use((socket, next) => {
-    console.log(
-      "🔐 Socket authentication attempt:",
-      socket.id
-    );
-
     authenticateSocket(socket, (error) => {
       if (error) {
-        console.error(
-          "❌ Socket authentication failed:",
-          error.message
-        );
-
+        console.error("❌ Socket authentication failed:", error.message);
         return next(error);
       }
-
-      console.log(
-        "✅ Socket authentication successful:",
-        socket.user?.email
-      );
-
       next();
     });
   });
 
   // Step 2: Sync authenticated user into PostgreSQL
   io.use(syncUser);
-// Step 3: Check ban status
+
+  // Step 3: Check ban status
   io.use(banCheck);
 
   io.on("connection", (socket) => {
+    // Sliding window per-socket rate limiter: max 50 events per second (KMEGLE-SEC-003)
+    let eventCount = 0;
+    let windowStart = Date.now();
+
+    socket.use(([event, ...args], next) => {
+      const now = Date.now();
+      if (now - windowStart > 1000) {
+        windowStart = now;
+        eventCount = 1;
+        return next();
+      }
+      eventCount++;
+      if (eventCount > 50) {
+        console.warn(`⚠️ Socket ${socket.id} exceeded event rate limit (>50 events/sec). Dropping event: ${event}`);
+        return; // Drop excess packet without calling next()
+      }
+      next();
+    });
+
     console.log(
       "🟢 Socket connected:",
       socket.id,

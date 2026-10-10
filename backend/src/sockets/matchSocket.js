@@ -7,33 +7,29 @@ function registerMatchSocket(socket, queue, dbService) {
       return;
     }
 
-
-    console.log(
-      `🔍 User ${userId} entered the queue...`
-    );
+    console.log(`🔍 User ${userId} requested matchmaking...`);
 
     try {
-      const isBanned =
-        await dbService.isUserBanned(userId);
+      // 1. Check permanent ban status
+      const isBanned = await dbService.isUserBanned(userId);
 
       if (isBanned) {
-        console.log(
-          `🛑 Banned user ${userId} tried to connect.`
-        );
-
+        console.log(`🛑 Banned user ${userId} attempted to connect.`);
         socket.emit("banned_alert", {
-          message:
-            "Your account has been suspended for policy violations.",
+          message: "Your account has been suspended for policy violations.",
         });
+        return;
+      }
 
+      // 2. Check server-enforced automated NSFW cooldown (Phase 3)
+      const cooldownRemaining = await dbService.getCooldownRemaining(userId);
+      if (cooldownRemaining > 0) {
+        console.log(`⏳ User ${userId} is on NSFW cooldown (${cooldownRemaining}s remaining)`);
+        socket.emit("cooldown_active", { remaining: cooldownRemaining });
         return;
       }
     } catch (err) {
-      console.error(
-        "❌ Error checking ban status:",
-        err
-      );
-
+      console.error("❌ Error verifying user eligibility:", err);
       return;
     }
 
