@@ -1,1 +1,17 @@
 @import "tailwindcss";
+
+html,
+body {
+  background-color: #0a0a0f;
+}
+
+/* Hides the scrollbar while keeping the element scrollable — used by the
+   chat message list so it matches the rest of the glass/dark UI chrome. */
+.scrollbar-hide {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}

@@ -1,0 +1,14 @@
+
+MatchmakerQueue benchmark — 5 queue sizes, ~15% of candidate pairs randomly blocked
+Estimated time columns assume 8ms per DB round-trip (change with --latency=<ms>; pull your own p50 from the Neon console for a number specific to your deployment).
+
+queue size | legacy DB calls | legacy est. time | current DB calls | current est. time | call reduction
+----------------------------------------------------------------------------------------------------
+20         |              12 |               96ms |                 1 |                 8ms | 92% fewer calls
+50         |              31 |              248ms |                 1 |                 8ms | 97% fewer calls
+100        |              63 |              504ms |                 1 |                 8ms | 98% fewer calls
+150        |              87 |              696ms |                 1 |                 8ms | 99% fewer calls
+200        |             119 |              952ms |                 1 |                 8ms | 99% fewer calls
+
+Methodology: call counts are measured exactly against the real MatchmakerQueue source (require()'d directly, dbService stubbed). Estimated-time columns are call-count × assumed per-call latency, not a live timed run — see header comment for why (timer-granularity noise at high call volumes).
+

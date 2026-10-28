@@ -33,9 +33,13 @@ async function initModel() {
     // Attempt to load from self-hosted path first, fall back to bundled
     try {
       model = await nsfwjs.load(SELF_HOSTED_MODEL_URL);
-    } catch {
+    } catch (selfHostedError) {
       console.warn(
-        "[nsfwWorker] Self-hosted model load failed, falling back to bundled MobileNetV2."
+        "[nsfwWorker] Self-hosted model failed to load from",
+        SELF_HOSTED_MODEL_URL,
+        "— falling back to the external nsfwjs default source (MobileNetV2 fetched from nsfwjs's own CDN). " +
+          "This means moderation is no longer fully self-hosted.",
+        selfHostedError
       );
       model = await nsfwjs.load("MobileNetV2");
     }

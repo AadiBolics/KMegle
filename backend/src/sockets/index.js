@@ -18,7 +18,8 @@ function registerSockets(io) {
     registerMatchSocket(
       socket,
       queue,
-      dbService
+      dbService,
+      roomService
     );
 
     registerRoomSocket(

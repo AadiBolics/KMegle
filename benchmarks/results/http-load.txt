@@ -1,0 +1,55 @@
+HTTP route benchmark against http://localhost:5000
+
+Run 1 (clean rate-limit window):
+
+1. /api/health latency (50 sequential requests, no auth needed)
+   p50: 1.1ms | p95: 2.0ms | p99: 41.4ms | max: 41.4ms
+
+2. /api/turn-credentials rate-limit enforcement (25 sequential authenticated requests)
+   20/25 succeeded, 5/25 rate-limited (429)
+   First 429 on request #21 (configured limit: 20/min) — Retry-After/Reset header: 59
+   -> Matches the configured strictLimiter threshold (20 req/min) exactly.
+
+Run 2 (re-run ~10s later, same 60s rate-limit window as run 1):
+
+2. /api/turn-credentials rate-limit enforcement (25 sequential authenticated requests)
+   0/25 succeeded, 25/25 rate-limited (429)
+   First 429 on request #1 — Retry-After/Reset header: 53
+   -> Every request was rejected because the limiter's 60s window was still
+      counting the 20 successful requests from run 1 against the same
+      client IP. This is not a bug in the test — it's further confirmation
+      the limiter is correctly stateful per-IP across requests/processes,
+      not just within a single request burst.
+
+1. /api/health latency, run 2 (50 sequential requests): mostly 429 from
+   request #30 onward (general limiter, 100/min, also still counting
+   requests from run 1's health check burst in the same window).
+   p50/p95 for the successful requests before that point:
+   p50: 1.0ms | p95: 1.4ms | p99: 36.6ms | max: 36.6ms (includes a few
+   429 responses before the window reset, excluded from a clean reading —
+   see run 1 for the uncontaminated numbers).
+
+Findings:
+- /api/health (unauthenticated, no DB/Firebase work) responds in ~1ms at
+  p50/p95 locally; p99 occasionally spikes to ~35-40ms, consistent with
+  an occasional GC pause or event-loop contention rather than the route
+  itself being slow.
+- The strict rate limiter on /api/turn-credentials enforces its configured
+  20 req/min threshold EXACTLY — the 21st request in a clean window is the
+  first to receive a 429, with a correct Retry-After header.
+- Rate-limit state correctly persists per-client across the full 60s
+  window, including across separate test-script invocations — confirmed
+  unintentionally by running the test twice in quick succession.
+
+Caveats:
+- Raw throughput (req/sec) is not reported as a benchmark here: the API is
+  deliberately rate-limited at 20-100 req/min by design (anti-abuse), so a
+  throughput number against a throttled-by-design API would not be a
+  meaningful capacity claim.
+- Measured against a local dev backend instance, not production.
+- Re-running this benchmark within 60 seconds of a previous run against
+  the same backend process will see pre-exhausted rate limit state — wait
+  a full minute between runs (or restart the backend) for a clean reading.
+
+Reproduce:
+  node benchmarks/http-load/benchmark.js

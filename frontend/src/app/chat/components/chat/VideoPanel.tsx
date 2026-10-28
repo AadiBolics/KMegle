@@ -1,6 +1,7 @@
 "use client";
 
 import { RefObject } from "react";
+import { ConnectionPhase } from "../../types/chat";
 
 interface VideoPanelProps {
   remoteVideoRef: RefObject<HTMLVideoElement | null>;
@@ -8,6 +9,8 @@ interface VideoPanelProps {
   remoteStream: MediaStream | null;
   socketConnected: boolean;
   isConnecting: boolean;
+  connectionPhase: ConnectionPhase;
+  isError: boolean;
   status: string;
   isFullscreen: boolean;
   isWarning?: boolean;
@@ -28,6 +31,8 @@ export default function VideoPanel({
   remoteStream,
   socketConnected,
   isConnecting,
+  connectionPhase,
+  isError,
   status,
   isFullscreen,
   isWarning = false,
@@ -41,7 +46,17 @@ export default function VideoPanel({
   onReport,
   onToggleFullscreen,
 }: VideoPanelProps) {
-  const isBusy = isConnecting || socketConnected;
+  const handleBlock = () => {
+    if (window.confirm("Block this user? You won't be matched with them again.")) {
+      onBlock();
+    }
+  };
+
+  const handleReport = () => {
+    if (window.confirm("Report this user and end the chat?")) {
+      onReport?.();
+    }
+  };
 
   const formatCooldown = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
@@ -175,23 +190,28 @@ export default function VideoPanel({
 
       {!remoteStream && !isCooldownActive && (
         <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none z-20 px-4 text-center">
-          {(socketConnected || isConnecting) &&
-          !status.includes("disconnected") &&
-          !status.includes("lost") &&
-          !status.includes("timed out") &&
-          !status.includes("failed") ? (
+          {!isError &&
+          (connectionPhase === "connecting" ||
+            connectionPhase === "waiting" ||
+            connectionPhase === "negotiating") ? (
             <>
               <div className="w-12 h-12 lg:w-16 lg:h-16 border-4 border-indigo-500/30 border-t-indigo-500 rounded-full animate-spin mb-4 lg:mb-6 shadow-[0_0_30px_rgba(99,102,241,0.5)]" />
-              <p className="text-indigo-200 font-medium tracking-wide animate-pulse text-xs lg:text-base">
+              <p
+                aria-live="polite"
+                className="text-indigo-200 font-medium tracking-wide animate-pulse text-xs lg:text-base"
+              >
                 {status}
               </p>
             </>
           ) : (
-            <>
-              <p className="text-gray-300 font-medium tracking-wide text-sm lg:text-base drop-shadow-md">
-                {status || "Click Start to begin matching."}
-              </p>
-            </>
+            <p
+              aria-live="polite"
+              className={`font-medium tracking-wide text-sm lg:text-base drop-shadow-md ${
+                isError ? "text-red-300" : "text-gray-300"
+              }`}
+            >
+              {status || "Click Start to begin matching."}
+            </p>
           )}
         </div>
       )}
@@ -201,7 +221,7 @@ export default function VideoPanel({
         <button
           onClick={onToggleSearch}
           disabled={isConnecting || isCooldownActive}
-          className={`px-5 lg:px-8 py-2.5 lg:py-3 rounded-full font-bold text-xs lg:text-sm transition-all whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed ${
+          className={`min-h-11 px-5 lg:px-8 py-2.5 lg:py-3 rounded-full font-bold text-xs lg:text-sm transition-all whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed ${
             isCooldownActive
               ? "bg-red-500/30 text-red-300 border border-red-500/30"
               : socketConnected
@@ -223,7 +243,7 @@ export default function VideoPanel({
         {socketConnected && !isCooldownActive && (
           <button
             onClick={onNext}
-            className="bg-white/15 hover:bg-white/25 text-white px-4 lg:px-6 py-2.5 lg:py-3 rounded-full font-bold text-xs lg:text-sm transition-all flex items-center gap-1.5 whitespace-nowrap"
+            className="min-h-11 bg-white/15 hover:bg-white/25 text-white px-4 lg:px-6 py-2.5 lg:py-3 rounded-full font-bold text-xs lg:text-sm transition-all flex items-center gap-1.5 whitespace-nowrap"
           >
             Next
             <svg className="w-4 h-4 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -235,18 +255,20 @@ export default function VideoPanel({
         {remoteStream && (
           <>
             <button
-              onClick={onBlock}
-              className="bg-red-500/20 hover:bg-red-500/40 text-red-300 px-3.5 lg:px-4 py-2.5 lg:py-3 rounded-full font-bold text-xs lg:text-sm transition-all border border-red-500/30 whitespace-nowrap"
+              onClick={handleBlock}
+              className="min-h-11 bg-red-500/20 hover:bg-red-500/40 text-red-300 px-3.5 lg:px-4 py-2.5 lg:py-3 rounded-full font-bold text-xs lg:text-sm transition-all border border-red-500/30 whitespace-nowrap"
               title="Block User"
+              aria-label="Block this user"
             >
               Block
             </button>
 
             {onReport && (
               <button
-                onClick={onReport}
-                className="bg-rose-500/20 hover:bg-rose-500/40 text-rose-300 px-3.5 lg:px-4 py-2.5 lg:py-3 rounded-full font-bold text-xs lg:text-sm transition-all border border-rose-500/30 whitespace-nowrap"
+                onClick={handleReport}
+                className="min-h-11 bg-rose-500/20 hover:bg-rose-500/40 text-rose-300 px-3.5 lg:px-4 py-2.5 lg:py-3 rounded-full font-bold text-xs lg:text-sm transition-all border border-rose-500/30 whitespace-nowrap"
                 title="Report User"
+                aria-label="Report this user"
               >
                 Report
               </button>
@@ -256,6 +278,7 @@ export default function VideoPanel({
               onClick={onToggleFullscreen}
               className="bg-white/15 hover:bg-white/25 text-white px-3.5 py-2.5 lg:py-3 rounded-full font-bold transition-all hidden md:block"
               title="Toggle Fullscreen"
+              aria-label={isFullscreen ? "Exit fullscreen" : "Enter fullscreen"}
             >
               {isFullscreen ? (
                 <svg className="w-4 h-4 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">

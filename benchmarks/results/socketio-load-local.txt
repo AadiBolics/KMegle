@@ -1,0 +1,89 @@
+Socket.IO load test against http://localhost:5000 (local dev instance, real Firebase auth, real Postgres)
+
+=== BEFORE: default pg.Pool (max=10), per-user getBlockedIds() calls ===
+
+concurrent users | connected | matched | match latency p50 | p95 | p99 | errors/timeouts
+----------------------------------------------------------------------------------------------------
+4                 | 4         | 4       | 246ms             | 531ms | 531ms | 0
+10                | 10        | 10      | 422ms             | 541ms | 541ms | 0
+20                | 20        | 20      | 889ms             | 1331ms | 1331ms | 0
+40                | 40        | 40      | 1689ms            | 2579ms | 2635ms | 0
+80                | 80        | 80      | 3435ms            | 5243ms | 5351ms | 0
+150               | 150       | 150     | 7974ms            | 12502ms | 12887ms | 0
+200               | 200       | 190     | 9796ms            | 14593ms | 15066ms | 10
+250               | 250       | 70      | 9054ms            | 11035ms | 11165ms | 180
+300               | 300       | 174     | 9996ms            | 13875ms | 14265ms | 126
+
+=== AFTER FIX #1: pg.Pool max raised 10 -> 50, connectionTimeoutMillis added ===
+(backend/src/config/db.js)
+
+concurrent users | connected | matched | match latency p50 | p95 | p99 | errors/timeouts
+----------------------------------------------------------------------------------------------------
+150               | 150       | 150     | 4922ms            | 9119ms | 9488ms | 0
+200               | 200       | 200     | 6914ms            | 12027ms | 12473ms | 0
+250               | 250       | 250     | 9259ms            | 15752ms | 16306ms | 0
+260               | 260       | 260     | 9244ms            | 16034ms | 16611ms | 0
+280               | 280       | 208     | 9285ms            | 17476ms | 17994ms | 72
+300               | 300       | 134     | 6566ms            | 16159ms | 18044ms | 166
+
+Pool fix alone pushed the 100%-success ceiling from ~150 to ~260, roughly
+doubling capacity. But latency at n=200-260 (~9s p50, ~16s p95) was
+already brushing up against this test's 20s match-timeout — the pool
+wasn't the bottleneck anymore above ~260, the matchmaker's OWN serialized
+per-user DB calls were: MatchmakerQueue.tryMatch() processes the full
+queue under a single lock, one await at a time, so at ~35-40ms per real
+Neon round-trip, a 300-user pass took ~10-12s of DB latency ALONE before
+any pairing logic — a structural ceiling no pool size fixes.
+
+=== AFTER FIX #2: batched getBlockGraphForUsers() — ONE query per pass ===
+(backend/src/services/dbService.js, backend/src/matchmaker/MatchmakerQueue.js)
+
+concurrent users | connected | matched | match latency p50 | p95 | p99 | errors/timeouts
+----------------------------------------------------------------------------------------------------
+10                | 10        | 10      | 165ms             | 356ms | 356ms | 0
+50                | 50        | 50      | 156ms             | 291ms | 329ms | 0
+150               | 150       | 150     | 413ms             | 469ms | 482ms | 0
+300               | 300       | 300     | 812ms             | 950ms | 979ms | 0
+400               | 400       | 400     | 1159ms            | 1339ms | 1354ms | 0
+500               | 500       | 500     | 1413ms            | 1648ms | 1672ms | 0
+
+100% connection and match success at every size tested, through n=500
+(the original target). Latency now scales with roughly n/3-n/4 ms instead
+of n×35ms — because the matchmaker makes exactly ONE DB round-trip per
+matching pass regardless of queue size (down from N), per-user cost is
+now the in-memory pairing scan (Map/Set lookups), not network latency.
+
+Root cause chain (both fixes were needed, in this order):
+  1. Default pool size (10) caused connection-pool contention above ~150-200
+     concurrent connections — fixed by raising max to 50.
+  2. Once that was fixed, the matchmaker's own O(n) SEQUENTIAL DB round-trips
+     per matching pass became the ceiling around n=260-300 — fixed by
+     replacing N per-user queries with 1 batched query per pass
+     (dbService.getBlockGraphForUsers), using a single
+     "WHERE blocker_id = ANY($1) OR blocked_id = ANY($1)" query instead of
+     N "WHERE blocker_id = $1 OR blocked_id = $1" queries.
+
+Caveats (unchanged from before):
+- Measures the LOCAL machine running the backend process, not production
+  hosting tier capacity (Render free tier: 0.1 CPU, 512MB RAM, 15-min
+  spin-down — see conversation discussion; not yet tested against the
+  real deployment).
+- Each round queues exactly N load-test users with no other real traffic
+  competing for the same queue.
+- The test-client process itself hit a V8 out-of-memory crash at ~540
+  cumulative socket.io-client instances within one Node process during
+  testing (not a backend issue) — mitigated with --max-old-space-size=4096
+  for this client script; a real production backend doesn't have this
+  constraint since it's not holding 500 *client* socket.io instances in
+  one process, just 500 server-side connections.
+- Two Firebase Admin API quirks were hit and handled during testing: an
+  occasional "uid already exists" on createUser (a slow/retried request
+  that had actually already succeeded — now treated as success, not
+  failure) and an occasional "quota exceeded" on deleteUser under heavy
+  consecutive load (now retried with backoff, and a "user not found" on
+  retry is correctly treated as already-cleaned-up, not a failure).
+  Verified zero orphaned test accounts after every run in this session.
+
+Reproduce (needs backend/.env + frontend/.env.local populated locally,
+backend running):
+  node --max-old-space-size=4096 benchmarks/socketio-load/benchmark.js --sizes=10,50,150,300,500

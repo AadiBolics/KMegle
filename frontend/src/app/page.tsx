@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "../context/authContext";
 
@@ -17,14 +17,17 @@ export default function LandingPage() {
   const [showTermsModal, setShowTermsModal] = useState(false);
   const [error, setError] = useState("");
 
-  // If the user is already authenticated, we don't need to show login.
-  useEffect(() => {
-    if (authLoading) return;
-  }, [authLoading]);
-
-  // Step 1: Open terms modal
+  // Step 1: returning, already-signed-in users have agreed to the terms
+  // before — skip straight to chat instead of making them click through
+  // the modal again. First-time visitors still see it via handleAgreeAndStart.
   const handleInitialStart = () => {
     setError("");
+
+    if (user) {
+      router.push("/chat");
+      return;
+    }
+
     setShowTermsModal(true);
   };
 
@@ -51,10 +54,15 @@ export default function LandingPage() {
       }
 
       router.push("/chat");
-    } catch (err: any) {
+    } catch (err) {
       console.error("Login error:", err);
 
-      if (err?.code === "auth/popup-closed-by-user") {
+      const code =
+        err instanceof Object && "code" in err
+          ? (err as { code?: string }).code
+          : undefined;
+
+      if (code === "auth/popup-closed-by-user") {
         setIsLoading(false);
         return;
       }
@@ -242,8 +250,11 @@ export default function LandingPage() {
               <div className="flex gap-3">
                 <span className="text-indigo-500 font-bold">1.</span>
                 <p>
-                  <strong>You must be 18+</strong> to use this
-                  service, or 13+ with parental permission.
+                  <strong>
+                    You must be at least 18 years old (or the legal
+                    age of majority in your jurisdiction)
+                  </strong>{" "}
+                  to use KMegle video chat.
                 </p>
               </div>
 

@@ -9,13 +9,7 @@ function registerWebRTCSocket(socket, roomService) {
   socket.on(
     "webrtc_offer",
     ({ offer, roomId }) => {
-      console.log(
-        "📡 WEBRTC OFFER RECEIVED",
-        {
-          socketId: socket.id,
-          roomId,
-        }
-      );
+      console.log("📡 WEBRTC OFFER RECEIVED", { socketId: socket.id, roomId });
 
       if (!offer || !roomId) {
         console.warn(
@@ -30,15 +24,6 @@ function registerWebRTCSocket(socket, roomService) {
           socket.id
         );
 
-      console.log(
-        "🔎 Offer room membership:",
-        {
-          socketId: socket.id,
-          roomId,
-          isMember,
-        }
-      );
-
       if (!isMember) {
         console.warn(
           "🚫 Socket is not a member of room:",
@@ -48,40 +33,18 @@ function registerWebRTCSocket(socket, roomService) {
         return;
       }
 
-      const room =
-        roomService.getRoom(roomId);
-
-      console.log(
-        "🏠 Forwarding WebRTC offer",
-        {
-          from: socket.id,
-          roomId,
-          room,
-        }
-      );
-
       socket
         .to(roomId)
         .emit("webrtc_offer", {
           offer,
         });
-
-      console.log(
-        "✅ WebRTC offer forwarded"
-      );
     }
   );
 
   socket.on(
     "webrtc_answer",
     ({ answer, roomId }) => {
-      console.log(
-        "📡 WEBRTC ANSWER RECEIVED",
-        {
-          socketId: socket.id,
-          roomId,
-        }
-      );
+      console.log("📡 WEBRTC ANSWER RECEIVED", { socketId: socket.id, roomId });
 
       if (!answer || !roomId) {
         console.warn(
@@ -95,15 +58,6 @@ function registerWebRTCSocket(socket, roomService) {
           roomId,
           socket.id
         );
-
-      console.log(
-        "🔎 Answer room membership:",
-        {
-          socketId: socket.id,
-          roomId,
-          isMember,
-        }
-      );
 
       if (!isMember) {
         console.warn(
@@ -119,23 +73,15 @@ function registerWebRTCSocket(socket, roomService) {
         .emit("webrtc_answer", {
           answer,
         });
-
-      console.log(
-        "✅ WebRTC answer forwarded"
-      );
     }
   );
 
   socket.on(
     "webrtc_ice_candidate",
     ({ candidate, roomId }) => {
-      console.log(
-        "🧊 WEBRTC ICE CANDIDATE RECEIVED",
-        {
-          socketId: socket.id,
-          roomId,
-        }
-      );
+      if (process.env.DEBUG_SOCKETS) {
+        console.log("🧊 WEBRTC ICE CANDIDATE RECEIVED", { socketId: socket.id, roomId });
+      }
 
       if (!candidate || !roomId) {
         return;

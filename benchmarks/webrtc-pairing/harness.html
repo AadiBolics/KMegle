@@ -1,0 +1,145 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8" /><title>KMegle WebRTC pairing harness</title></head>
+<body>
+<!--
+  Minimal standalone test harness — NOT the real app UI. It replays the
+  exact same signaling sequence as frontend/src/app/chat/hooks/useChatSession.ts
+  (find_match -> match_found -> offer/answer/ICE -> connectionState==="connected")
+  against the real backend, so the benchmark exercises real signaling code,
+  not a reimplementation's guess at it. video/audio elements exist only so
+  Chromium's fake-media flags have somewhere real to attach a stream; we
+  don't render anything meaningful.
+
+  Params (via URL query string):
+    token    - a real Firebase ID token (obtained server-side, see provisionTestUsers.js)
+    backend  - the Socket.IO backend URL, e.g. http://localhost:5000
+
+  Result contract: sets window.__testResult = { success, connectMs, error }
+  once the attempt finishes (success or failure), for Playwright to read.
+-->
+<video id="local" autoplay playsinline muted></video>
+<video id="remote" autoplay playsinline></video>
+<script src="/socket.io.min.js"></script>
+<script>
+(async function () {
+  const params = new URLSearchParams(window.location.search);
+  const token = params.get("token");
+  const backend = params.get("backend");
+
+  window.__testResult = null;
+  const startedAt = performance.now();
+
+  function finish(result) {
+    if (window.__testResult) return; // first outcome wins
+    window.__testResult = { ...result, connectMs: performance.now() - startedAt };
+  }
+
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+    document.getElementById("local").srcObject = stream;
+
+    const socket = io(backend, {
+      transports: ["websocket"],
+      auth: { token },
+      reconnection: false,
+    });
+
+    let pc = null;
+    let roomId = null;
+    const pendingCandidates = [];
+
+    const overallTimeout = setTimeout(() => {
+      finish({ success: false, error: "overall_timeout" });
+    }, 25000);
+
+    socket.on("connect_error", (err) => {
+      clearTimeout(overallTimeout);
+      finish({ success: false, error: `connect_error: ${err.message}` });
+    });
+
+    socket.on("connect", () => {
+      socket.emit("find_match");
+    });
+
+    socket.on("match_found", async (data) => {
+      roomId = data.roomId;
+      pc = new RTCPeerConnection({
+        iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
+      });
+
+      stream.getTracks().forEach((track) => pc.addTrack(track, stream));
+
+      pc.ontrack = (event) => {
+        document.getElementById("remote").srcObject = event.streams[0];
+      };
+
+      pc.onicecandidate = (event) => {
+        if (event.candidate) {
+          socket.emit("webrtc_ice_candidate", { candidate: event.candidate, roomId });
+        }
+      };
+
+      pc.onconnectionstatechange = () => {
+        if (pc.connectionState === "connected") {
+          clearTimeout(overallTimeout);
+          finish({ success: true });
+        } else if (pc.connectionState === "failed") {
+          clearTimeout(overallTimeout);
+          finish({ success: false, error: "peerconnection_failed" });
+        }
+      };
+
+      if (data.role === "initiator") {
+        const channel = pc.createDataChannel("chat");
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+        socket.emit("webrtc_offer", { offer, roomId });
+      } else {
+        pc.ondatachannel = () => {};
+      }
+    });
+
+    socket.on("webrtc_offer", async ({ offer }) => {
+      if (!pc) return;
+      await pc.setRemoteDescription(offer);
+      for (const candidate of pendingCandidates.splice(0)) {
+        await pc.addIceCandidate(candidate).catch(() => {});
+      }
+      const answer = await pc.createAnswer();
+      await pc.setLocalDescription(answer);
+      socket.emit("webrtc_answer", { answer, roomId });
+    });
+
+    socket.on("webrtc_answer", async ({ answer }) => {
+      if (!pc) return;
+      await pc.setRemoteDescription(answer);
+      for (const candidate of pendingCandidates.splice(0)) {
+        await pc.addIceCandidate(candidate).catch(() => {});
+      }
+    });
+
+    socket.on("webrtc_ice_candidate", async ({ candidate }) => {
+      if (!pc || !pc.remoteDescription) {
+        pendingCandidates.push(candidate);
+        return;
+      }
+      await pc.addIceCandidate(candidate).catch(() => {});
+    });
+
+    socket.on("banned_alert", (data) => {
+      clearTimeout(overallTimeout);
+      finish({ success: false, error: `banned_alert: ${data?.message}` });
+    });
+
+    socket.on("cooldown_active", () => {
+      clearTimeout(overallTimeout);
+      finish({ success: false, error: "cooldown_active" });
+    });
+  } catch (err) {
+    finish({ success: false, error: `harness_exception: ${err.message}` });
+  }
+})();
+</script>
+</body>
+</html>

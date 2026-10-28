@@ -1,9 +1,4 @@
-const { firebaseAuth } = require("../config/firebaseAdmin");
-
-const ALLOWED_DOMAINS = [
-  "@iiitkottayam.ac.in",
-  "@gmail.com",
-];
+const { verifyFirebaseToken, AuthError } = require("./authHelpers");
 
 async function httpFirebaseAuth(req, res, next) {
   try {
@@ -17,41 +12,9 @@ async function httpFirebaseAuth(req, res, next) {
 
     const token = authHeader.substring(7);
 
-    const decodedToken = await firebaseAuth.verifyIdToken(token);
+    const user = await verifyFirebaseToken(token);
 
-    const uid = decodedToken.uid;
-    const email = decodedToken.email?.trim().toLowerCase();
-
-    if (!uid) {
-      return res.status(401).json({
-        error: "Invalid Firebase user",
-      });
-    }
-
-    if (!decodedToken.email_verified) {
-      return res.status(403).json({
-        error: "Email must be verified",
-      });
-    }
-
-    if (
-      !email ||
-      !ALLOWED_DOMAINS.some((domain) =>
-        email.endsWith(domain)
-      )
-    ) {
-      return res.status(403).json({
-        error: "Only IIIT Kottayam accounts are allowed",
-      });
-    }
-
-    req.user = {
-      uid,
-      email,
-      name: decodedToken.name || null,
-      picture: decodedToken.picture || null,
-      emailVerified: decodedToken.email_verified,
-    };
+    req.user = user;
 
     next();
   } catch (error) {
@@ -59,6 +22,16 @@ async function httpFirebaseAuth(req, res, next) {
       "❌ HTTP Firebase authentication failed:",
       error.message
     );
+
+    if (error instanceof AuthError) {
+      const status = error.message === "Email must be verified" ? 403
+        : error.message === "Only IIIT Kottayam accounts are allowed" ? 403
+        : 401;
+
+      return res.status(status).json({
+        error: error.message,
+      });
+    }
 
     return res.status(401).json({
       error: "Invalid or expired authentication token",

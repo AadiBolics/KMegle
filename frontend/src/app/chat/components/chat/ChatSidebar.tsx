@@ -1,7 +1,7 @@
 "use client";
 
 import { FormEvent, RefObject } from "react";
-import { ChatMessage } from "../../types/chat";
+import { ChatMessage, ConnectionPhase } from "../../types/chat";
 
 interface ChatSidebarProps {
   messages: ChatMessage[];
@@ -9,6 +9,7 @@ interface ChatSidebarProps {
   setChatInput: (value: string) => void;
   onSendMessage: (event: FormEvent) => void;
   remoteStream: MediaStream | null;
+  connectionPhase: ConnectionPhase;
   isFullscreen: boolean;
   isDarkMode: boolean;
   chatEndRef: RefObject<HTMLDivElement | null>;
@@ -20,10 +21,24 @@ export default function ChatSidebar({
   setChatInput,
   onSendMessage,
   remoteStream,
+  connectionPhase,
   isFullscreen,
   isDarkMode,
   chatEndRef,
 }: ChatSidebarProps) {
+  const dotColor =
+    connectionPhase === "live"
+      ? "bg-green-500"
+      : connectionPhase === "idle"
+        ? "bg-gray-500"
+        : "bg-amber-400";
+  const dotPinging = connectionPhase !== "idle";
+  const dotLabel =
+    connectionPhase === "live"
+      ? "Connected to a stranger"
+      : connectionPhase === "idle"
+        ? "Not connected"
+        : "Searching for a stranger";
   return (
     <div
       className={`${
@@ -52,14 +67,28 @@ export default function ChatSidebar({
             Live Chat
           </h2>
 
-          <span className="flex h-2 w-2 relative">
-            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75" />
-            <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500" />
+          <span
+            className="flex h-2 w-2 relative"
+            role="status"
+            aria-label={dotLabel}
+            title={dotLabel}
+          >
+            {dotPinging && (
+              <span
+                className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${dotColor}`}
+              />
+            )}
+            <span
+              className={`relative inline-flex rounded-full h-2 w-2 transition-colors duration-300 ${dotColor}`}
+            />
           </span>
         </div>
       )}
 
-      <div className="flex-grow p-3 lg:p-4 overflow-y-auto flex flex-col gap-3 lg:gap-4 scrollbar-hide">
+      <div
+        aria-live="polite"
+        className="flex-grow p-3 lg:p-4 overflow-y-auto flex flex-col gap-3 lg:gap-4 scrollbar-hide"
+      >
         {messages.length === 0 && !isFullscreen && (
           <div
             className={`text-center mt-auto mb-auto font-mono text-xs ${
@@ -92,7 +121,7 @@ export default function ChatSidebar({
             )}
 
             <span
-              className={`px-3 lg:px-4 py-2 lg:py-2.5 max-w-[85%] text-xs lg:text-sm shadow-sm leading-relaxed ${
+              className={`px-3 lg:px-4 py-2 lg:py-2.5 max-w-[85%] break-words whitespace-pre-wrap text-xs lg:text-sm shadow-sm leading-relaxed ${
                 message.sender === "me"
                   ? "bg-indigo-600 text-white rounded-2xl rounded-br-sm"
                   : message.sender === "system"
@@ -129,11 +158,14 @@ export default function ChatSidebar({
         <div className="relative flex items-center shadow-sm rounded-full">
           <input
             type="text"
+            maxLength={1000}
+            aria-label="Chat message"
+            autoComplete="off"
             value={chatInput}
             onChange={(event) => setChatInput(event.target.value)}
             placeholder={remoteStream ? "Type a message..." : "Waiting..."}
             disabled={!remoteStream}
-            className={`w-full rounded-full pl-4 lg:pl-5 pr-11 lg:pr-12 py-3 lg:py-3.5 text-xs lg:text-sm focus:outline-none focus:border-indigo-500/70 focus:ring-1 focus:ring-indigo-500/70 disabled:opacity-50 transition-all ${
+            className={`w-full rounded-full pl-4 lg:pl-5 pr-11 lg:pr-12 py-3 lg:py-3.5 text-base lg:text-sm focus:outline-none focus:border-indigo-500/70 focus:ring-1 focus:ring-indigo-500/70 disabled:opacity-50 transition-all ${
               isFullscreen
                 ? "bg-black/40 backdrop-blur-xl border border-white/20 text-white placeholder-gray-300"
                 : isDarkMode
@@ -144,6 +176,7 @@ export default function ChatSidebar({
 
           <button
             type="submit"
+            aria-label="Send message"
             disabled={!remoteStream || !chatInput.trim()}
             className="absolute right-1 w-8 h-8 lg:w-10 lg:h-10 flex items-center justify-center bg-indigo-600 hover:bg-indigo-500 rounded-full disabled:opacity-50 transition-all"
           >

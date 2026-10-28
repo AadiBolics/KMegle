@@ -67,8 +67,20 @@ router.post(
       banStatus,
     } = req.body;
 
+    if (typeof userId !== "string" || userId.trim().length === 0) {
+      return res.status(400).json({
+        error: "userId must be a non-empty string",
+      });
+    }
+
+    if (typeof banStatus !== "boolean") {
+      return res.status(400).json({
+        error: "banStatus must be a boolean",
+      });
+    }
+
     try {
-      await db.query(
+      const updateResult = await db.query(
         `
           UPDATE users
           SET is_banned = $1
@@ -76,6 +88,13 @@ router.post(
         `,
         [banStatus, userId]
       );
+
+      if (updateResult.rowCount === 0) {
+        return res.status(404).json({
+          error: "No user found with that userId",
+          rowCount: 0,
+        });
+      }
 
       // KMEGLE-SEC-006: Immediately disconnect active socket sessions if banned
       if (banStatus) {
@@ -109,6 +128,7 @@ router.post(
 
       res.json({
         success: true,
+        rowCount: updateResult.rowCount,
       });
     } catch (err) {
       console.error(

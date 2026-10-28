@@ -90,7 +90,9 @@ const dbService = {
       return res.rows.length > 0 && res.rows[0].is_banned;
     } catch (err) {
       console.error("❌ Error checking ban status:", err);
-      return false;
+      // Fail closed: let the caller decide how to treat the error
+      // (do NOT silently report "not banned" on a DB failure).
+      throw err;
     }
   },
 
@@ -179,8 +181,54 @@ const dbService = {
       return res.rows.length > 0;
     } catch (err) {
       console.error("❌ Error checking block status:", err);
-      return false;
+      // Fail closed: let the caller decide how to treat the error
+      // (do NOT silently report "not blocked" on a DB failure).
+      throw err;
     }
+  },
+
+  // Fetch the set of userIds that are blocked with respect to a given user
+  // (either direction: the user blocked them, or they blocked the user).
+  // Used to batch-check block relationships without one DB round-trip per pair.
+  getBlockedIds: async (userId) => {
+    const query = `
+      SELECT
+        CASE WHEN blocker_id = $1 THEN blocked_id ELSE blocker_id END AS other_id
+      FROM user_blocks
+      WHERE blocker_id = $1 OR blocked_id = $1
+    `;
+
+    const res = await db.query(query, [userId]);
+    return new Set(res.rows.map((row) => row.other_id));
+  },
+
+  // Fetch ALL block relationships among a given set of userIds in ONE query,
+  // instead of one getBlockedIds() round-trip per user. At real-world DB
+  // latency (~30-40ms observed against Neon), N sequential round-trips for
+  // a queue of a few hundred users is itself the bottleneck (MatchmakerQueue
+  // processes the queue under a single lock, one call at a time) — this
+  // collapses that to a single round-trip per matching pass regardless of
+  // queue size. Returns a Map<userId, Set<blockedWithUserId>>.
+  getBlockGraphForUsers: async (userIds) => {
+    const graph = new Map();
+    for (const id of userIds) graph.set(id, new Set());
+
+    if (userIds.length === 0) return graph;
+
+    const query = `
+      SELECT blocker_id, blocked_id
+      FROM user_blocks
+      WHERE blocker_id = ANY($1::text[]) OR blocked_id = ANY($1::text[])
+    `;
+
+    const res = await db.query(query, [userIds]);
+
+    for (const row of res.rows) {
+      if (graph.has(row.blocker_id)) graph.get(row.blocker_id).add(row.blocked_id);
+      if (graph.has(row.blocked_id)) graph.get(row.blocked_id).add(row.blocker_id);
+    }
+
+    return graph;
   },
 };
 

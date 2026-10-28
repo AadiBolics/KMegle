@@ -7,15 +7,19 @@ import ChatSidebar from "./ChatSidebar";
 import VideoPanel from "./VideoPanel";
 import { useChatSession } from "../../hooks/useChatSession";
 import { useNsfwModeration } from "../../hooks/useNsfwModeration";
+import { useAuth } from "../../../../context/authContext";
 import { useTheme } from "../../../../context/themeContext";
 
 export default function ChatDashboard() {
   const router = useRouter();
+  const { user, loading: authLoading } = useAuth();
 
   const {
     socket,
     status,
     isConnecting,
+    isError,
+    connectionPhase,
     roomId,
     localStream,
     remoteStream,
@@ -77,10 +81,36 @@ export default function ChatDashboard() {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
+  // Redirect unauthenticated visitors instead of letting them sit on the
+  // full chat UI with camera controls that silently refuse to do anything.
+  useEffect(() => {
+    if (!authLoading && !user) {
+      router.replace("/");
+    }
+  }, [authLoading, user, router]);
+
   const handleOpenSettings = () => {
     cleanupConnection();
     router.push("/settings");
   };
+
+  if (authLoading || !user) {
+    return (
+      <div
+        className={`h-[100dvh] w-full flex items-center justify-center font-sans transition-colors duration-300 ${
+          isDarkMode ? "bg-[#0a0a0f] text-white" : "bg-gray-50 text-gray-900"
+        }`}
+      >
+        <div
+          className={`w-8 h-8 border-4 rounded-full animate-spin ${
+            isDarkMode
+              ? "border-indigo-500/30 border-t-indigo-500"
+              : "border-indigo-300 border-t-indigo-600"
+          }`}
+        />
+      </div>
+    );
+  }
 
   return (
     <div
@@ -101,6 +131,8 @@ export default function ChatDashboard() {
         remoteStream={remoteStream}
         socketConnected={!!socket}
         isConnecting={isConnecting}
+        connectionPhase={connectionPhase}
+        isError={isError}
         status={status}
         isFullscreen={isFullscreen}
         isWarning={isWarning}
@@ -121,6 +153,7 @@ export default function ChatDashboard() {
         setChatInput={setChatInput}
         onSendMessage={sendMessage}
         remoteStream={remoteStream}
+        connectionPhase={connectionPhase}
         isFullscreen={isFullscreen}
         isDarkMode={isDarkMode}
         chatEndRef={chatEndRef}

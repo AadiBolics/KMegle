@@ -30,8 +30,12 @@ export function ThemeProvider({
 
     if (savedTheme === "light") {
       setIsDarkMode(false);
-    } else {
+    } else if (savedTheme === "dark") {
       setIsDarkMode(true);
+    } else {
+      setIsDarkMode(
+        window.matchMedia("(prefers-color-scheme: dark)").matches
+      );
     }
 
     setMounted(true);

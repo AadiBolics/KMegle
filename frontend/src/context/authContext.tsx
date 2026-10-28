@@ -15,7 +15,7 @@ import {
   type User,
 } from "firebase/auth";
 
-import { auth, googleProvider } from "../app/chat/lib/firebase";
+import { auth, googleProvider } from "../lib/firebase";
 
 interface AuthContextType {
   user: User | null;
@@ -42,8 +42,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const login = async () => {
   try {
     await signInWithPopup(auth, googleProvider);
-  } catch (error: any) {
-    if (error?.code === "auth/cancelled-popup-request") {
+  } catch (error) {
+    const code =
+      error instanceof Object && "code" in error
+        ? (error as { code?: string }).code
+        : undefined;
+
+    if (code === "auth/cancelled-popup-request") {
       console.log("A Google sign-in popup is already in progress.");
       return;
     }

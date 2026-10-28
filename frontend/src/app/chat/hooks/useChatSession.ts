@@ -9,8 +9,17 @@ import {
 } from "react";
 import { io, Socket } from "socket.io-client";
 
-import { ChatMessage } from "../types/chat";
+import { ChatMessage, ConnectionPhase } from "../types/chat";
 import { useAuth } from "../../../context/authContext";
+
+// Dev-only logging helper — keeps debug noise out of production consoles.
+// console.error calls are intentionally left untouched so real errors
+// remain visible in production for diagnosis.
+const debugLog = (...args: unknown[]) => {
+  if (process.env.NODE_ENV !== "production") {
+    console.log(...args);
+  }
+};
 
 // In production the Next.js rewrite in next.config.ts proxies
 // /socket.io/* and /api/backend/* through Vercel to the Render backend.
@@ -29,6 +38,11 @@ function getSocketUrl() {
   // is proxied through Vercel, bypassing ISP/campus DNS blocks on *.onrender.com.
   return window.location.origin;
 }
+
+const MAX_MESSAGE_LENGTH = 1000;
+// "disconnected" is often a brief network blip that recovers by itself, so
+// give the connection a moment before treating it as a lost partner.
+const DISCONNECT_GRACE_MS = 6000;
 
 export function useChatSession() {
   const { user, loading: authLoading } = useAuth();
@@ -51,10 +65,14 @@ export function useChatSession() {
   const pendingCandidates = useRef<RTCIceCandidateInit[]>([]);
   const dataChannelRef = useRef<RTCDataChannel | null>(null);
   const connectionTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const disconnectTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [chatInput, setChatInput] = useState("");
   const [isConnecting, setIsConnecting] = useState(false);
+  // True whenever `status` describes a failure rather than progress — lets the UI
+  // suppress the "connecting" spinner on error states without parsing status text.
+  const [isError, setIsError] = useState(false);
 
   const iceConfigRef = useRef<RTCConfiguration>({
     iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
@@ -85,12 +103,37 @@ export function useChatSession() {
       connectionTimeoutRef.current = null;
     }
 
+    if (disconnectTimerRef.current) {
+      clearTimeout(disconnectTimerRef.current);
+      disconnectTimerRef.current = null;
+    }
+
     peerConnectionRef.current?.close();
     peerConnectionRef.current = null;
 
     dataChannelRef.current = null;
     pendingCandidates.current = [];
   }, []);
+
+  // The call died but the socket is still alive: tell the server we left the
+  // room (so the partner is notified and the room is freed), then show an
+  // error state. Shared by every "call lost" path.
+  const handleCallLost = useCallback(
+    (message: string) => {
+      if (!roomIdRef.current) return;
+
+      socketRef.current?.emit("leave_room", { roomId: roomIdRef.current });
+      clearPeerConnection();
+
+      setIsError(true);
+      setStatus(message);
+      setRemoteStream(null);
+      remoteStreamRef.current = null;
+      setRoomId(null);
+      roomIdRef.current = null;
+    },
+    [clearPeerConnection],
+  );
 
   const cleanupConnection = useCallback(() => {
     const currentSocket = socketRef.current;
@@ -126,6 +169,19 @@ export function useChatSession() {
     setMessages([]);
   }, [clearPeerConnection]);
 
+  // ----------------------------------------
+  // CONNECTION PHASE (derived)
+  // ----------------------------------------
+  // A single source of truth for "what's happening right now" so the UI
+  // never has to guess by pattern-matching the human-readable `status` text.
+  const connectionPhase: ConnectionPhase = (() => {
+    if (remoteStream) return "live";
+    if (socket && roomId) return "negotiating";
+    if (socket) return "waiting";
+    if (isConnecting) return "connecting";
+    return "idle";
+  })();
+
   // Cleanup when component unmounts
   useEffect(() => {
     return cleanupConnection;
@@ -152,7 +208,7 @@ export function useChatSession() {
           const token = await user.getIdToken();
           headers["Authorization"] = `Bearer ${token}`;
         } catch (e) {
-          console.warn("Could not get auth token for TURN credentials:", e);
+          debugLog("Could not get auth token for TURN credentials:", e);
         }
       }
 
@@ -207,12 +263,15 @@ export function useChatSession() {
         };
       }
     } catch (error) {
-      console.warn(
+      debugLog(
         "Could not fetch TURN credentials, falling back to STUN only.",
         error,
       );
     }
-  }, []);
+    // `user` must be a dependency: with [] the callback captured the initial
+    // null user, so TURN credentials were requested without a token (401) and
+    // every call silently fell back to STUN only.
+  }, [user]);
 
   // ----------------------------------------
   // DATA CHANNEL
@@ -223,15 +282,20 @@ export function useChatSession() {
       dataChannelRef.current = channel;
 
       channel.onopen = () => {
-        console.log("Data channel opened successfully.");
+        debugLog("Data channel opened successfully.");
       };
 
       channel.onmessage = (event) => {
+        // The peer is untrusted: accept only plain strings and cap their size.
+        if (typeof event.data !== "string") return;
+        const text = event.data.slice(0, MAX_MESSAGE_LENGTH);
+        if (!text.trim()) return;
+
         setMessages((prev) => [
           ...prev,
           {
             sender: "stranger",
-            text: event.data,
+            text,
           },
         ]);
       };
@@ -291,7 +355,7 @@ export function useChatSession() {
       };
 
       pc.onconnectionstatechange = () => {
-        console.log("📡 WebRTC Connection State:", pc.connectionState);
+        debugLog("📡 WebRTC Connection State:", pc.connectionState);
         // If roomId was already cleared (block/skip/disconnect happened),
         // ignore any further state changes from this closing PC.
         if (!roomIdRef.current) return;
@@ -301,35 +365,47 @@ export function useChatSession() {
             clearTimeout(connectionTimeoutRef.current);
             connectionTimeoutRef.current = null;
           }
+          setIsError(false);
           setStatus("Connected! Video active.");
+          if (disconnectTimerRef.current) {
+            clearTimeout(disconnectTimerRef.current);
+            disconnectTimerRef.current = null;
+          }
+        } else if (pc.connectionState === "disconnected") {
+          setStatus("Connection unstable... trying to recover.");
+          if (!disconnectTimerRef.current) {
+            disconnectTimerRef.current = setTimeout(() => {
+              disconnectTimerRef.current = null;
+              if (
+                peerConnectionRef.current === pc &&
+                pc.connectionState !== "connected"
+              ) {
+                handleCallLost("Connection lost. Click Next for someone new.");
+              }
+            }, DISCONNECT_GRACE_MS);
+          }
         } else if (
-          pc.connectionState === "disconnected" ||
           pc.connectionState === "failed" ||
           pc.connectionState === "closed"
         ) {
-          setStatus("Stranger disconnected. Click Next for someone new.");
-          setRemoteStream(null);
-          remoteStreamRef.current = null;
+          handleCallLost("Stranger disconnected. Click Next for someone new.");
         }
       };
 
       pc.oniceconnectionstatechange = () => {
-        console.log("🧊 WebRTC ICE State:", pc.iceConnectionState);
+        debugLog("🧊 WebRTC ICE State:", pc.iceConnectionState);
         if (!roomIdRef.current) return;
 
-        if (
-          pc.iceConnectionState === "failed" ||
-          pc.iceConnectionState === "disconnected"
-        ) {
-          setStatus("Connection lost. Click Next for someone new.");
-          setRemoteStream(null);
-          remoteStreamRef.current = null;
+        // Only a hard ICE failure is final. Transient "disconnected" is
+        // handled with a grace period in onconnectionstatechange above.
+        if (pc.iceConnectionState === "failed") {
+          handleCallLost("Connection lost. Click Next for someone new.");
         }
       };
 
       return pc;
     },
-    [clearPeerConnection],
+    [clearPeerConnection, handleCallLost],
   );
 
   // ----------------------------------------
@@ -375,23 +451,36 @@ export function useChatSession() {
       // ------------------------------------
 
       newSocket.on("connect", () => {
-        console.log(
+        debugLog(
           "🔌 Socket connected:",
           newSocket.id,
         );
 
         setIsConnecting(false);
+        setIsError(false);
+
+        // On an automatic reconnect the server has already dropped our old
+        // room, so discard the stale peer connection before searching again.
+        clearPeerConnection();
+        setRemoteStream(null);
+        remoteStreamRef.current = null;
+        setRoomId(null);
+        roomIdRef.current = null;
 
         setStatus(
           "Connected! Entering waiting pool...",
         );
+
+        setMessages([
+          { sender: "system", text: "Waiting for a stranger..." },
+        ]);
 
         // Identity now comes from the
         // authenticated Firebase socket.
         newSocket.emit("find_match");
       });
       const handleUserBlocked = () => {
-        console.log("🛑 user_blocked ack received — entering matchmaking queue");
+        debugLog("🛑 user_blocked ack received — entering matchmaking queue");
         // State was already reset optimistically in block(); just re-enter the queue
         newSocket.emit("find_match");
       };
@@ -400,6 +489,41 @@ export function useChatSession() {
         "user_blocked",
         handleUserBlocked
       );
+
+      // Block could not be saved server-side; keep the user searching rather
+      // than stuck on the optimistic "User blocked" screen.
+      newSocket.on("block_failed", () => {
+        setIsError(true);
+        setStatus("Couldn't block that user. Looking for someone new...");
+        newSocket.emit("find_match");
+      });
+
+      // Server could not start a search (e.g. database hiccup).
+      newSocket.on("match_error", (data?: { message?: string }) => {
+        setIsError(true);
+        setStatus(data?.message || "Could not start searching. Please try again.");
+        cleanupConnection();
+      });
+
+      newSocket.on("chat_rate_limited", () => {
+        setMessages((prev) => [
+          ...prev,
+          { sender: "system", text: "You're sending messages too fast." },
+        ]);
+      });
+
+      // Unexpected drops (server restart, network loss). socket.io retries
+      // on its own; tell the user instead of freezing on a dead call.
+      newSocket.on("disconnect", (reason) => {
+        if (reason === "io client disconnect") return;
+        clearPeerConnection();
+        setRemoteStream(null);
+        remoteStreamRef.current = null;
+        setRoomId(null);
+        roomIdRef.current = null;
+        setIsError(true);
+        setStatus("Connection to the server was lost. Reconnecting...");
+      });
 
       // ------------------------------------
       // SOCKET CONNECT ERROR
@@ -413,7 +537,12 @@ export function useChatSession() {
         console.error("error:", error);
 
         setIsConnecting(false);
+        setIsError(true);
         setStatus(`Connection failed: ${error.message}`);
+
+        // The socket never actually connected — tear it down so the UI
+        // doesn't get stuck believing it's still "waiting" on a dead socket.
+        cleanupConnection();
       });
 
       // ------------------------------------
@@ -421,6 +550,7 @@ export function useChatSession() {
       // ------------------------------------
 
       newSocket.on("banned_alert", (data) => {
+        setIsError(true);
         setStatus(
           `🚨 ${data.message}`,
         );
@@ -432,9 +562,12 @@ export function useChatSession() {
       // COOLDOWN ACTIVE
       // ------------------------------------
 
-      newSocket.on("cooldown_active", () => {
+      newSocket.on("cooldown_active", (data?: { remaining?: number }) => {
+        setIsError(true);
         setStatus(
-          "⏳ Temporarily on cooldown for content violations."
+          data?.remaining
+            ? `⏳ On cooldown for content violations. Try again in ${data.remaining}s.`
+            : "⏳ Temporarily on cooldown for content violations."
         );
         setIsConnecting(false);
         cleanupConnection();
@@ -448,16 +581,13 @@ export function useChatSession() {
         "match_found",
         async (data) => {
 
-          console.log(
+          debugLog(
             "🔥 MATCH_FOUND RECEIVED:",
             data
           );
-          newSocket.emit("test_webrtc", {
-            roomId: data.roomId,
-            message: "hello from frontend",
-          });
 
           try {
+            setIsError(false);
             setStatus(
               "Match found! Connecting video..."
             );
@@ -473,10 +603,10 @@ export function useChatSession() {
             }
             connectionTimeoutRef.current = setTimeout(() => {
               if (!remoteStreamRef.current && peerConnectionRef.current?.connectionState !== "connected") {
-                console.warn("⏱️ WebRTC connection timeout reached");
-                setStatus("Stranger disconnected or failed to connect. Click Next for someone new.");
-                clearPeerConnection();
-                setRemoteStream(null);
+                debugLog("⏱️ WebRTC connection timeout reached");
+                // Negotiation failed — free the server-side room too so the
+                // partner isn't left waiting on a call that will never start.
+                handleCallLost("Couldn't connect to the stranger. Click Next for someone new.");
               }
             }, 12000);
 
@@ -491,12 +621,12 @@ export function useChatSession() {
             const currentStream =
               localStreamRef.current || stream;
 
-            console.log(
+            debugLog(
               "🔥 Local stream:",
               currentStream
             );
 
-            console.log(
+            debugLog(
               "🔥 Creating peer connection..."
             );
 
@@ -506,33 +636,33 @@ export function useChatSession() {
               currentStream,
             );
 
-            console.log(
+            debugLog(
               "🔥 Peer connection created:",
               pc
             );
 
             if (data.role === "initiator") {
-              console.log(
+              debugLog(
                 "🔥 I am the initiator"
               );
 
               const channel =
                 pc.createDataChannel("chat");
 
-              console.log(
+              debugLog(
                 "🔥 Data channel created"
               );
 
               setupDataChannel(channel);
 
-              console.log(
+              debugLog(
                 "🔥 Creating WebRTC offer..."
               );
 
               const offer =
                 await pc.createOffer();
 
-              console.log(
+              debugLog(
                 "🔥 Setting local description..."
               );
 
@@ -540,7 +670,7 @@ export function useChatSession() {
                 offer
               );
 
-              console.log(
+              debugLog(
                 "🔥 Local description set, sending offer..."
               );
 
@@ -552,17 +682,17 @@ export function useChatSession() {
                 }
               );
 
-              console.log(
+              debugLog(
                 "🔥 WebRTC offer emitted"
               );
 
             } else {
-              console.log(
+              debugLog(
                 "🔥 I am the responder"
               );
 
               pc.ondatachannel = (event) => {
-                console.log(
+                debugLog(
                   "🔥 Data channel received"
                 );
 
@@ -578,6 +708,7 @@ export function useChatSession() {
               error
             );
 
+            setIsError(true);
             setStatus(
               "Failed to establish video connection."
             );
@@ -636,7 +767,7 @@ export function useChatSession() {
                   ),
                 );
               } catch (error) {
-                console.warn(
+                debugLog(
                   "Failed to add buffered ICE candidate after offer:",
                   error,
                 );
@@ -689,7 +820,7 @@ export function useChatSession() {
                   ),
                 );
               } catch (error) {
-                console.warn(
+                debugLog(
                   "Failed to add buffered ICE candidate after answer:",
                   error,
                 );
@@ -731,7 +862,7 @@ export function useChatSession() {
                 ),
               );
             } catch (error) {
-              console.warn(
+              debugLog(
                 "Failed to add ICE candidate:",
                 error,
               );
@@ -782,6 +913,7 @@ export function useChatSession() {
       cleanupConnection,
       clearPeerConnection,
       createPeerConnection,
+      handleCallLost,
       setupDataChannel,
     ],
   );
@@ -828,16 +960,15 @@ export function useChatSession() {
         }
       }
 
+      setIsError(false);
       setStatus("Requesting camera...");
 
       setIsConnecting(true);
 
-      setMessages([
-        {
-          sender: "system",
-          text: "Connecting to server...",
-        },
-      ]);
+      // Clear the chat log for this fresh attempt — the video panel's status
+      // overlay already shows live progress ("Requesting camera...", "Fetching
+      // relay config...", etc.), so we don't need a system message here too.
+      setMessages([]);
 
       try {
         // ----------------------------------
@@ -847,8 +978,17 @@ export function useChatSession() {
         const stream =
           await navigator.mediaDevices.getUserMedia(
             {
-              video: true,
-              audio: true,
+              // Modest resolution keeps bandwidth, TURN usage and NSFW
+              // sampling cost reasonable on phones and campus Wi-Fi.
+              video: {
+                width: { ideal: 640 },
+                height: { ideal: 480 },
+                frameRate: { ideal: 24, max: 30 },
+              },
+              audio: {
+                echoCancellation: true,
+                noiseSuppression: true,
+              },
             },
           );
 
@@ -869,8 +1009,8 @@ export function useChatSession() {
         // FIREBASE TOKEN
         // ----------------------------------
 
-        const token =
-          await user.getIdToken();
+        // Fail early with a clear error if the account can't get a token.
+        await user.getIdToken();
 
         // ----------------------------------
         // SOCKET.IO
@@ -881,8 +1021,13 @@ export function useChatSession() {
           {
             transports: ["polling", "websocket"],
 
-            auth: {
-              token,
+            // A function is re-evaluated on every (re)connect, so automatic
+            // reconnects after an hour don't reuse an expired ID token.
+            auth: (cb) => {
+              user
+                .getIdToken()
+                .then((token) => cb({ token }))
+                .catch(() => cb({ token: "" }));
             },
           },
         );
@@ -894,21 +1039,35 @@ export function useChatSession() {
           newSocket,
           stream,
         );
-      } catch (error: any) {
+      } catch (error) {
         console.error(
           "Media / connection error:",
           error,
         );
 
         setIsConnecting(false);
+        setIsError(true);
+        const errorName = error instanceof Error ? error.name : undefined;
+        const errorMessage = error instanceof Error ? error.message : undefined;
         const isPermissionError =
-          error?.name === "NotAllowedError" ||
-          error?.name === "PermissionDeniedError";
+          errorName === "NotAllowedError" ||
+          errorName === "PermissionDeniedError";
+
+        const isNoDevice =
+          errorName === "NotFoundError" ||
+          errorName === "DevicesNotFoundError";
+        const isBusyDevice =
+          errorName === "NotReadableError" ||
+          errorName === "TrackStartError";
 
         setStatus(
           isPermissionError
-            ? "Error: Camera and Microphone permissions are required."
-            : error?.message || "Failed to start session. Please try again.",
+            ? "Camera and microphone access is blocked. Allow it in your browser's site settings, then try again."
+            : isNoDevice
+              ? "No camera or microphone found. Connect one and try again."
+              : isBusyDevice
+                ? "Your camera or microphone is being used by another app. Close it and try again."
+                : errorMessage || "Failed to start session. Please try again.",
         );
 
         // If camera was opened but the socket
@@ -943,6 +1102,7 @@ export function useChatSession() {
     );
 
     cleanupConnection();
+    setIsError(false);
 
     setStatus(
       "Disconnected. Ready to search.",
@@ -975,6 +1135,7 @@ export function useChatSession() {
     if (!activeSocket) return;
 
     resetForNextMatch();
+    setIsError(false);
 
     setStatus(
       "Skipped. Entering the waiting pool...",
@@ -1010,6 +1171,7 @@ export function useChatSession() {
     setMessages([
       { sender: "system", text: "User blocked. Looking for someone new..." },
     ]);
+    setIsError(false);
     setStatus("User blocked. Looking for someone new...");
 
     // Let the server know — the ack (user_blocked) will then emit find_match
@@ -1039,7 +1201,7 @@ export function useChatSession() {
       event.preventDefault();
 
       const message =
-        chatInput.trim();
+        chatInput.trim().slice(0, MAX_MESSAGE_LENGTH);
 
       const channel =
         dataChannelRef.current;
@@ -1075,6 +1237,8 @@ export function useChatSession() {
     socket,
     status,
     isConnecting,
+    isError,
+    connectionPhase,
     roomId,
     localStream,
     remoteStream,

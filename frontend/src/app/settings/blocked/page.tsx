@@ -36,12 +36,8 @@ export default function BlockedUsersPage() {
 
         const token = await user.getIdToken();
 
-        const backendUrl =
-          process.env.NEXT_PUBLIC_BACKEND_URL ||
-          "http://localhost:5000";
-
         const response = await fetch(
-          `${backendUrl}/api/blocks`,
+          "/api/backend/blocks",
           {
             headers: {
               Authorization: `Bearer ${token}`,
@@ -76,12 +72,8 @@ export default function BlockedUsersPage() {
 
       const token = await user.getIdToken();
 
-      const backendUrl =
-        process.env.NEXT_PUBLIC_BACKEND_URL ||
-        "http://localhost:5000";
-
       const response = await fetch(
-        `${backendUrl}/api/blocks/${blockRef}`,
+        `/api/backend/blocks/${blockRef}`,
         {
           method: "DELETE",
           headers: {
@@ -208,10 +200,6 @@ export default function BlockedUsersPage() {
                 : "bg-white border-gray-200 shadow-sm"
             }`}
           >
-            {/*<div className="text-4xl mb-4">
-              ✓
-            </div>*/}
-
             <h2 className="font-semibold text-lg">
               No blocked users
             </h2>

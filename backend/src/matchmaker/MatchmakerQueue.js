@@ -10,11 +10,25 @@ class MatchmakerQueue {
     this.size = 0;
     this.nodesMap = new Map();
     this.isMatching = false;
+    // Set when add() is called mid-pass so users who joined while a pass was
+    // awaiting the DB are not left waiting for some unrelated future trigger.
+    this.rematchRequested = false;
+    this.retryTimer = null;
   }
 
   add(socket, userId) {
-    if (this.nodesMap.has(socket.id)) {
+    if (!this._push(socket, userId)) {
       return;
+    }
+
+    this.tryMatch();
+  }
+
+  // Appends to the tail without triggering a match pass. Returns false if the
+  // socket is already queued or has already disconnected.
+  _push(socket, userId) {
+    if (this.nodesMap.has(socket.id) || socket.connected === false) {
+      return false;
     }
 
     const newNode = new Node(socket, userId);
@@ -31,7 +45,7 @@ class MatchmakerQueue {
 
     this.size++;
 
-    this.tryMatch();
+    return true;
   }
 
   remove(socketId) {
@@ -65,17 +79,66 @@ class MatchmakerQueue {
     const oldHead = this.head;
 
     this.remove(oldHead.socket.id);
-    this.add(oldHead.socket, oldHead.userId);
+    this._push(oldHead.socket, oldHead.userId);
   }
 
   async tryMatch() {
     if (this.isMatching) {
+      this.rematchRequested = true;
       return;
     }
 
     this.isMatching = true;
+    let needsRetry = false;
 
     try {
+      // Drop sockets that disconnected before their disconnect handler ran,
+      // so they can never be matched into a dead room.
+      for (let node = this.head; node; ) {
+        const next = node.next;
+        if (node.socket.connected === false) {
+          this.remove(node.socket.id);
+        }
+        node = next;
+      }
+
+      // Fetch ALL block relationships for the currently-queued users in ONE
+      // round-trip, instead of one round-trip per queued user. At real DB
+      // latency (~30-40ms observed against Neon), N sequential round-trips
+      // under this method's single-flight lock was itself the concurrency
+      // ceiling once queue size grew into the hundreds — a full pass for
+      // n=300 took ~10s of DB latency alone before any JS work. Collapsing
+      // to one query makes pass time ~constant regardless of queue size.
+      const queuedUserIds = [];
+      for (let node = this.head; node; node = node.next) {
+        queuedUserIds.push(node.userId);
+      }
+
+      // null is the fail-closed sentinel: if we can't verify block status
+      // for this pass, treat every pair as blocked rather than guess "not
+      // blocked" on a DB failure.
+      let blockGraph = null;
+      try {
+        blockGraph = await dbService.getBlockGraphForUsers(queuedUserIds);
+      } catch (err) {
+        console.error("❌ Error fetching block graph:", err);
+      }
+
+      if (!blockGraph) needsRetry = true;
+
+      const isBlockedPair = (idA, idB) => {
+        if (!blockGraph) return true;
+        // Never pair a user with themselves (same account in two tabs).
+        if (idA === idB) return true;
+        // Users who joined after the graph was fetched have unknown block
+        // status; skip them this pass (rematchRequested picks them up next).
+        if (!blockGraph.has(idA) || !blockGraph.has(idB)) return true;
+        return (
+          blockGraph.get(idA)?.has(idB) === true ||
+          blockGraph.get(idB)?.has(idA) === true
+        );
+      };
+
       let attempts = 0;
 
       while (this.size >= 2 && attempts < this.size) {
@@ -89,19 +152,7 @@ class MatchmakerQueue {
         let foundMatch = false;
 
         while (user2) {
-          let hasBlocked = false;
-
-          try {
-            hasBlocked = await dbService.hasBlocked(
-              user1.userId,
-              user2.userId
-            );
-          } catch (err) {
-            console.error(
-              "❌ Error checking block status:",
-              err
-            );
-          }
+          const hasBlocked = isBlockedPair(user1.userId, user2.userId);
 
           // KMEGLE-SEC-010: Ensure neither user disconnected or was matched during async DB lookup
           if (!this.nodesMap.has(user1.socket.id) || !this.nodesMap.has(user2.socket.id)) {
@@ -176,6 +227,19 @@ class MatchmakerQueue {
       }
     } finally {
       this.isMatching = false;
+
+      if (this.rematchRequested) {
+        this.rematchRequested = false;
+        setImmediate(() => this.tryMatch());
+      } else if (needsRetry && this.size >= 2 && !this.retryTimer) {
+        // The block lookup failed (fail-closed), so nobody was matched. Retry
+        // shortly instead of leaving everyone stuck on "searching".
+        this.retryTimer = setTimeout(() => {
+          this.retryTimer = null;
+          this.tryMatch();
+        }, 2000);
+        this.retryTimer.unref?.();
+      }
     }
   }
 }

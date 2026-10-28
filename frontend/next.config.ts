@@ -11,6 +11,10 @@ const BACKEND_URL =
     : "http://localhost:5000");
 
 const nextConfig: NextConfig = {
+  // Produces a self-contained .next/standalone build (with a pruned
+  // node_modules) for a slim, multi-stage Docker runtime image.
+  output: "standalone",
+
   devIndicators: false,
 
   // Empty turbopack config — required to silence the warning when no turbopack

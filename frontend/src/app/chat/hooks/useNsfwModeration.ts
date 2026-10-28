@@ -1,10 +1,20 @@
 "use client";
 
 import { useEffect, useRef, useState, useCallback } from "react";
+import type { Socket } from "socket.io-client";
+
+// Dev-only logging helper — keeps debug noise out of production consoles.
+// console.error calls are intentionally left untouched so real errors
+// remain visible in production for diagnosis.
+const debugLog = (...args: unknown[]) => {
+  if (process.env.NODE_ENV !== "production") {
+    console.log(...args);
+  }
+};
 
 // --- Constants ---
 const WINDOW_SIZE = 6;           // Sliding window of 6 frames (~1.8 s at 3.3 Hz)
-const BAN_THRESHOLD = 4;         // Violations needed in window to trigger a ban (was 3/5)
+const BAN_THRESHOLD = 4;         // Violations needed in window (local or remote) to trigger a ban/report
 const WARN_THRESHOLD = 2;        // Violations needed to show a warning blur (was 1/5)
 const SAMPLE_INTERVAL_MS = 300;  // ~3.3 Hz for fast sub-second detection
 const CANVAS_SIZE = 224;         // MobileNetV2 input resolution
@@ -39,7 +49,7 @@ export function useNsfwModeration({
   localVideoRef: React.RefObject<HTMLVideoElement | null>;
   remoteVideoRef?: React.RefObject<HTMLVideoElement | null>;
   isActive: boolean;
-  socket?: any;
+  socket?: Socket | null;
   roomId?: string | null;
   onCriticalViolation?: () => void;
 }) {
@@ -212,7 +222,7 @@ export function useNsfwModeration({
     const violations = windowArr.filter(Boolean).length;
     setRemoteStrikeCount(violations);
 
-    if (violations >= 2) {
+    if (violations >= BAN_THRESHOLD) {
       // Sustained remote violation: disconnect and report peer to server
       console.warn("🚨 Sustained NSFW violation detected on remote feed");
       remoteWindowRef.current = [];
@@ -275,7 +285,7 @@ export function useNsfwModeration({
             evaluateRemoteRef.current(predictions);
           }
         } else if (type === "ERROR") {
-          console.warn("[nsfwModeration] Worker error:", error);
+          debugLog("[nsfwModeration] Worker error:", error);
         }
       };
 
@@ -285,7 +295,7 @@ export function useNsfwModeration({
 
       worker.postMessage({ type: "INIT" });
     } catch (err) {
-      console.warn("[nsfwModeration] Could not instantiate NSFW worker:", err);
+      debugLog("[nsfwModeration] Could not instantiate NSFW worker:", err);
     }
 
     return () => {
@@ -355,7 +365,7 @@ export function useNsfwModeration({
       );
     } catch (err) {
       isLocalEvaluatingRef.current = false;
-      console.warn("[nsfwModeration] Local frame capture error:", err);
+      debugLog("[nsfwModeration] Local frame capture error:", err);
     }
   }, [localVideoRef]);
 
@@ -396,7 +406,7 @@ export function useNsfwModeration({
       );
     } catch (err) {
       isRemoteEvaluatingRef.current = false;
-      console.warn("[nsfwModeration] Remote frame capture error:", err);
+      debugLog("[nsfwModeration] Remote frame capture error:", err);
     }
   }, [remoteVideoRef]);
 

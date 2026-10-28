@@ -103,7 +103,7 @@ export default function AdminDashboard() {
     setError(null);
     try {
       await login();
-    } catch (err: any) {
+    } catch (err) {
       console.error("Login failed:", err);
       setError("Google authentication was cancelled or failed.");
     }

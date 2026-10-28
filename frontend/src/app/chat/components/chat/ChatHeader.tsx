@@ -27,6 +27,7 @@ export default function ChatHeader({
           onClick={onToggleDarkMode}
           className="bg-black/30 hover:bg-black/50 backdrop-blur-md border border-white/20 p-2 rounded-full text-white transition-all shadow-lg"
           title="Toggle Theme"
+          aria-label="Toggle theme"
         >
           {isDarkMode ? (
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">

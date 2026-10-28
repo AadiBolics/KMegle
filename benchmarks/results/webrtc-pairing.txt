@@ -1,0 +1,24 @@
+WebRTC pairing benchmark — 15 pairs against http://localhost:5000
+(each pair = 2 real headless Chromium instances with fake camera/mic devices)
+
+  pair 1/15: A=OK B=OK
+  pair 2/15: A=OK B=OK
+  pair 3/15: A=OK B=OK
+  pair 4/15: A=OK B=OK
+  pair 5/15: A=OK B=OK
+  pair 6/15: A=OK B=OK
+  pair 7/15: A=OK B=OK
+  pair 8/15: A=OK B=OK
+  pair 9/15: A=OK B=OK
+  pair 10/15: A=OK B=OK
+  pair 11/15: A=OK B=OK
+  pair 12/15: A=OK B=OK
+  pair 13/15: A=OK B=OK
+  pair 14/15: A=OK B=OK
+  pair 15/15: A=OK B=OK
+
+Results: 30/30 peers established a working connection (100%)
+Time-to-connect — p50: 525ms, p95: 1058ms, max: 1071ms
+
+Note: measures STUN-only (Google's public STUN server) connectivity on your local network/machine. Your TURN relay fallback (Metered) is NOT exercised here since this harness doesn't fetch /api/turn-credentials — most local-to-local connections succeed via STUN/host candidates alone, so this number is an optimistic case, not a worst-case NAT scenario.
+

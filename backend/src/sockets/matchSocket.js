@@ -1,4 +1,8 @@
-function registerMatchSocket(socket, queue, dbService) {
+function registerMatchSocket(socket, queue, dbService, roomService) {
+  // Guards against a client firing find_match repeatedly while the async
+  // eligibility checks below are still in flight.
+  let searchInFlight = false;
+
   socket.on("find_match", async () => {
     const userId = socket.user?.uid;
 
@@ -7,7 +11,11 @@ function registerMatchSocket(socket, queue, dbService) {
       return;
     }
 
-    console.log(`🔍 User ${userId} requested matchmaking...`);
+    if (searchInFlight || queue.nodesMap.has(socket.id)) {
+      return;
+    }
+
+    searchInFlight = true;
 
     try {
       // 1. Check permanent ban status
@@ -21,19 +29,38 @@ function registerMatchSocket(socket, queue, dbService) {
         return;
       }
 
-      // 2. Check server-enforced automated NSFW cooldown (Phase 3)
+      // 2. Check server-enforced automated NSFW cooldown
       const cooldownRemaining = await dbService.getCooldownRemaining(userId);
       if (cooldownRemaining > 0) {
-        console.log(`⏳ User ${userId} is on NSFW cooldown (${cooldownRemaining}s remaining)`);
         socket.emit("cooldown_active", { remaining: cooldownRemaining });
         return;
       }
+
+      // The socket may have dropped while we were awaiting the DB. Queueing
+      // it now would leave a ghost entry that can be matched into a dead room.
+      if (!socket.connected) {
+        return;
+      }
+
+      // Searching again while still in a room (e.g. a missed "next" event)
+      // must end that room first, otherwise the old partner is left hanging
+      // and the room leaks.
+      for (const roomId of roomService.getRoomsForSocket(socket.id)) {
+        socket.to(roomId).emit("stranger_disconnected");
+        socket.leave(roomId);
+        roomService.deleteRoom(roomId);
+      }
+
+      queue.add(socket, userId);
     } catch (err) {
       console.error("❌ Error verifying user eligibility:", err);
-      return;
+      // Tell the client instead of leaving it on an endless spinner.
+      socket.emit("match_error", {
+        message: "Could not start searching. Please try again.",
+      });
+    } finally {
+      searchInFlight = false;
     }
-
-    queue.add(socket, userId);
   });
 
   socket.on("stop_search", () => {

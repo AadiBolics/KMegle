@@ -22,7 +22,8 @@ function createSocketServer(server) {
         // KMEGLE-SEC-012: Strict whitelist without wildcards
         if (
           allowedOrigins.includes(origin) ||
-          /^https?:\/\/localhost(:\d+)?$/.test(origin)
+          (process.env.NODE_ENV !== "production" &&
+            /^https?:\/\/localhost(:\d+)?$/.test(origin))
         ) {
           return callback(null, true);
         }

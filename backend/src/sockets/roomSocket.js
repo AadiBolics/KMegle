@@ -1,3 +1,22 @@
+// Per-reporter cooldown tracker shared across all sockets/connections.
+// Maps reporterId -> timestamp (ms) of their last accepted report.
+// Keeps a single reporter from spamming report_peer_nsfw_violation/report_user
+// to repeatedly disconnect+penalize whoever they're paired with.
+const lastReportAt = new Map();
+const REPORT_COOLDOWN_MS = 10 * 1000;
+
+function isReportRateLimited(reporterId) {
+  const last = lastReportAt.get(reporterId);
+  const now = Date.now();
+
+  if (last && now - last < REPORT_COOLDOWN_MS) {
+    return true;
+  }
+
+  lastReportAt.set(reporterId, now);
+  return false;
+}
+
 function registerRoomSocket(
   socket,
   queue,
@@ -84,6 +103,12 @@ function registerRoomSocket(
     const peer = roomService.getOtherUser(roomId, socket.id);
     if (!peer) return;
 
+    if (isReportRateLimited(reporterId)) {
+      console.warn(`⚠️ Reporter ${reporterId} is rate limited (peer NSFW report cooldown)`);
+      socket.emit("report_failed", { message: "Please wait before submitting another report." });
+      return;
+    }
+
     console.warn(`🚨 Peer content violation reported against: ${peer.userId} by ${reporterId}`);
     await dbService.recordViolation(peer.userId, "peer_nsfw_detected");
 
@@ -114,8 +139,18 @@ function registerRoomSocket(
     const peer = roomService.getOtherUser(roomId, socket.id);
     if (!peer) return;
 
+    if (isReportRateLimited(reporterId)) {
+      console.warn(`⚠️ Reporter ${reporterId} is rate limited (user report cooldown)`);
+      socket.emit("report_failed", { message: "Please wait before submitting another report." });
+      return;
+    }
+
     console.log(`🚩 User report filed by ${reporterId} against ${peer.userId}: ${reason}`);
-    await dbService.recordReport(reporterId, peer.userId, reason || "user_reported");
+    const safeReason =
+      typeof reason === "string" && reason.trim()
+        ? reason.trim().slice(0, 500)
+        : "user_reported";
+    await dbService.recordReport(reporterId, peer.userId, safeReason);
 
     // Enforce 30-second cooldown on the reported peer
     await dbService.recordViolation(peer.userId, "manual_user_report");
@@ -136,7 +171,7 @@ function registerRoomSocket(
   });
 
   // Normal room leave
-  socket.on("leave_room", ({ roomId }) => {
+  socket.on("leave_room", ({ roomId } = {}) => {
     if (!roomId) return;
     if (!roomService.isMember(roomId, socket.id)) return;
 

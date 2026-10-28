@@ -14,6 +14,11 @@ const db = require("./config/db");
 
 const app = express();
 
+// Trust the first hop reverse proxy/load balancer so req.ip and
+// express-rate-limit see the real client IP (from X-Forwarded-For)
+// instead of the proxy's IP.
+app.set("trust proxy", 1);
+
 // --------------------------------------------------
 // Security Headers & Middleware
 // --------------------------------------------------
@@ -35,7 +40,8 @@ app.use(
       if (
         !origin ||
         allowedOrigins.includes(origin) ||
-        /^https?:\/\/localhost(:\d+)?$/.test(origin)
+        (process.env.NODE_ENV !== "production" &&
+          /^https?:\/\/localhost(:\d+)?$/.test(origin))
       ) {
         return callback(null, true);
       }
@@ -89,6 +95,13 @@ registerSockets(io);
 
 app.use("/api", routes);
 
+// Final error handler: JSON instead of Express's HTML stack trace page.
+app.use((err, req, res, next) => {
+  console.error("❌ Unhandled Express error:", err.message);
+  if (res.headersSent) return next(err);
+  res.status(err.message?.startsWith("CORS") ? 403 : 500).json({ error: "Request failed" });
+});
+
 // --------------------------------------------------
 // Graceful Shutdown (KMEGLE-SEC-011, 022)
 // --------------------------------------------------
@@ -126,6 +139,12 @@ const shutdown = (signal) => {
     process.exit(1);
   }, 10000);
 };
+
+// A rejected promise inside a socket handler must never take the whole
+// signaling server (and every active call) down.
+process.on("unhandledRejection", (reason) => {
+  console.error("❌ Unhandled promise rejection:", reason);
+});
 
 process.on("SIGTERM", () => shutdown("SIGTERM"));
 process.on("SIGINT", () => shutdown("SIGINT"));
