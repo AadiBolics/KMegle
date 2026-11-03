@@ -30,7 +30,7 @@ export default function LandingPage() {
     const handleKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") { event.preventDefault(); setShowTermsModal(false); }
       if (event.key !== "Tab" || !dialog) return;
-      const controls = Array.from(dialog.querySelectorAll<HTMLElement>('button:not([disabled]), a[href], [tabindex="0"]'));
+      const controls = Array.from(dialog.querySelectorAll<HTMLElement>('button:not([disabled]), a[href], summary, [tabindex="0"]'));
       const first = controls[0]; const last = controls[controls.length - 1];
       if (!first) { event.preventDefault(); return; }
       if (event.shiftKey && (document.activeElement === first || document.activeElement === dialog)) {
@@ -247,6 +247,8 @@ export default function LandingPage() {
         <div className="fade-up-delay-3 mt-5 text-sm text-gray-300 leading-relaxed">
           Review the <button type="button" onClick={() => setShowTermsModal(true)} className="underline underline-offset-4 min-h-11 px-1 text-indigo-300 hover:text-indigo-200 focus-visible:outline-2 focus-visible:outline-offset-2">Safety &amp; Terms</button> before continuing.
         </div>
+        <p className="mt-2 text-sm"><a href="/policies" className="inline-flex min-h-11 items-center px-2 underline underline-offset-4 text-indigo-300">Terms &amp; Privacy</a></p>
+        <p className="mt-3 text-sm text-gray-300">Need help? <a href="mailto:aadinadhan17@gmail.com" className="inline-flex min-h-11 items-center underline underline-offset-4 text-indigo-300 break-all">Contact support</a></p>
         <div className="mt-6 pt-6 border-t border-white/10 text-left">
           <h2 className="text-base font-semibold text-white mb-3">Before you connect</h2>
           <ol className="space-y-2 text-sm text-gray-300 leading-relaxed list-decimal pl-5">
@@ -272,6 +274,12 @@ export default function LandingPage() {
               You must agree to these rules before using KMegle.
             </p>
 
+            <details className="mb-5 text-left"><summary className="cursor-pointer min-h-11 py-3 text-sm font-semibold text-indigo-300">Before you connect: data notice</summary><div className="space-y-4 text-sm leading-relaxed text-gray-300">
+<p>KMegle uses Google sign-in through Firebase Authentication. The service receives your account ID and email. Its database stores your account ID and a keyed hash of your email; service logs may include your email and account ID.</p>
+<p>Video and audio use WebRTC. Connections may be direct or use a TURN relay when needed. A direct connection can reveal your public IP address to the other participant. KMegle&apos;s reviewed application code does not record video or audio, but another participant can record their screen.</p>
+<p>For safety, KMegle stores reports, report reasons, blocks and violation records linked to account IDs. Automated content checks run in the browser during a session.</p>
+<p>Retention periods and the policies of hosting, authentication and relay providers still need to be confirmed. Do not share passwords, financial details or other private information in a chat.</p>
+</div><a href="/policies" target="_blank" rel="noopener noreferrer" className="inline-flex min-h-11 items-center underline text-indigo-300">Read Terms &amp; Privacy</a></details>
             <div className="space-y-4 text-sm text-gray-300 mb-4 bg-black/30 p-4 rounded-xl border border-white/5">
 
               <div className="flex gap-3">
