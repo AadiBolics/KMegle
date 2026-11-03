@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "../context/authContext";
 
@@ -16,6 +16,36 @@ export default function LandingPage() {
   const [isLoading, setIsLoading] = useState(false);
   const [showTermsModal, setShowTermsModal] = useState(false);
   const [error, setError] = useState("");
+
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const openerRef = useRef<HTMLElement | null>(null);
+
+  useEffect(() => {
+    if (!showTermsModal) return;
+    openerRef.current = document.activeElement as HTMLElement;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const dialog = dialogRef.current;
+    dialog?.focus();
+    const handleKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") { event.preventDefault(); setShowTermsModal(false); }
+      if (event.key !== "Tab" || !dialog) return;
+      const controls = Array.from(dialog.querySelectorAll<HTMLElement>('button:not([disabled]), a[href], [tabindex="0"]'));
+      const first = controls[0]; const last = controls[controls.length - 1];
+      if (!first) { event.preventDefault(); return; }
+      if (event.shiftKey && (document.activeElement === first || document.activeElement === dialog)) {
+        event.preventDefault(); last.focus();
+      } else if (!event.shiftKey && (document.activeElement === last || document.activeElement === dialog)) {
+        event.preventDefault(); first.focus();
+      }
+    };
+    document.addEventListener("keydown", handleKey);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      document.removeEventListener("keydown", handleKey);
+      openerRef.current?.focus();
+    };
+  }, [showTermsModal]);
 
   // Step 1: returning, already-signed-in users have agreed to the terms
   // before — skip straight to chat instead of making them click through
@@ -142,7 +172,7 @@ export default function LandingPage() {
         }
       `}</style>
 
-      <div className="bg-[#13141a]/80 backdrop-blur-2xl border border-white/10 rounded-3xl shadow-2xl max-w-md w-full p-10 text-center z-10 transform transition-all hover:scale-[1.01] duration-500">
+      <div className="bg-[#13141a]/80 backdrop-blur-2xl border border-white/10 rounded-3xl shadow-2xl max-w-md w-full p-6 sm:p-10 text-center z-10">
 
         {/* Logo */}
         <div className="fade-up">
@@ -154,14 +184,14 @@ export default function LandingPage() {
             Random Video Chat
           </p>
 
-          <p className="text-gray-500 text-sm mb-8">
-            Meet people from your community, instantly.
+          <p className="text-gray-300 text-sm mb-6">
+            Random video chat for students. Google sign-in required; camera and microphone access comes next.
           </p>
         </div>
 
         {/* Feature pills */}
-        <div className="fade-up-delay flex flex-wrap justify-center gap-2 mb-8">
-          {["Private Video", "No Profiles", "Free", "HD Video"].map(
+        <div className="fade-up-delay grid grid-cols-2 gap-2 mb-6">
+          {["Video chat", "No public profiles", "Google sign-in", "18+ only"].map(
             (feat) => (
               <span
                 key={feat}
@@ -184,7 +214,7 @@ export default function LandingPage() {
             {isLoading ? (
               <div className="flex items-center gap-3">
                 <div className="w-5 h-5 border-2 border-indigo-300 border-t-white rounded-full animate-spin" />
-                Connecting...
+                Signing in...
               </div>
             ) : (
               <>
@@ -202,7 +232,7 @@ export default function LandingPage() {
                   />
                 </svg>
 
-                Start Chatting
+                {user ? "Start Chatting" : "Continue with Google"}
               </>
             )}
           </button>
@@ -214,38 +244,35 @@ export default function LandingPage() {
           </p>
         )}
 
-        <div className="fade-up-delay-3 mt-6 text-[11px] text-gray-500 tracking-wide">
-          By clicking, you agree to our Terms of Service.
+        <div className="fade-up-delay-3 mt-5 text-sm text-gray-300 leading-relaxed">
+          Review the <button type="button" onClick={() => setShowTermsModal(true)} className="underline underline-offset-4 min-h-11 px-1 text-indigo-300 hover:text-indigo-200 focus-visible:outline-2 focus-visible:outline-offset-2">Safety &amp; Terms</button> before continuing.
         </div>
-
-        {/* SEO / description */}
-        <div className="mt-10 pt-8 border-t border-white/5 text-left">
-          <h2 className="text-sm font-bold text-gray-400 mb-3">
-            KMegle
-          </h2>
-
-          <p className="text-xs text-gray-600 leading-relaxed">
-            KMegle connects students through random video chat.
-            No public profiles and no unnecessary setup — just
-            connect and chat.
-          </p>
+        <div className="mt-6 pt-6 border-t border-white/10 text-left">
+          <h2 className="text-base font-semibold text-white mb-3">Before you connect</h2>
+          <ol className="space-y-2 text-sm text-gray-300 leading-relaxed list-decimal pl-5">
+            <li>Review the safety rules and sign in with Google.</li>
+            <li>Allow camera and microphone access when you start a session.</li>
+            <li>Use Stop to leave, or Block and Report for unsafe behavior.</li>
+          </ol>
+          <p className="mt-4 text-sm text-gray-300 leading-relaxed">Video quality depends on your device and connection. Another participant can record their screen. Do not share private information.</p>
         </div>
       </div>
 
       {/* TERMS MODAL */}
       {showTermsModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
-          <div className="bg-[#13141a] border border-white/10 rounded-2xl max-w-lg w-full p-6 sm:p-8 shadow-2xl">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/80 backdrop-blur-sm">
+          <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="safety-title" aria-describedby="safety-description" tabIndex={-1} className="bg-[#13141a] border border-white/10 rounded-2xl max-w-lg w-full max-h-[calc(100dvh-1.5rem)] flex flex-col overflow-hidden shadow-2xl focus:outline-none">
+            <div className="overflow-y-auto min-h-0 p-5 sm:p-8 pb-2 sm:pb-3">
 
-            <h2 className="text-2xl font-bold text-white mb-2">
+            <h2 id="safety-title" className="text-2xl font-bold text-white mb-2">
               Safety & Terms
             </h2>
 
-            <p className="text-gray-400 text-sm mb-6">
+            <p id="safety-description" className="text-gray-300 text-sm mb-5">
               You must agree to these rules before using KMegle.
             </p>
 
-            <div className="space-y-4 text-sm text-gray-300 mb-8 bg-black/30 p-4 rounded-xl border border-white/5">
+            <div className="space-y-4 text-sm text-gray-300 mb-4 bg-black/30 p-4 rounded-xl border border-white/5">
 
               <div className="flex gap-3">
                 <span className="text-indigo-500 font-bold">1.</span>
@@ -286,11 +313,12 @@ export default function LandingPage() {
               </div>
             </div>
 
-            <div className="flex flex-col sm:flex-row gap-3">
+            </div>
+            <div className="flex flex-col-reverse sm:flex-row gap-2 p-4 sm:px-8 border-t border-white/10 shrink-0 bg-[#13141a]">
 
               <button
                 onClick={() => setShowTermsModal(false)}
-                className="w-full sm:w-auto px-6 py-3 rounded-xl font-bold text-gray-400 hover:bg-white/5 hover:text-white transition-colors"
+                className="w-full sm:w-auto px-6 py-3 rounded-xl font-bold text-gray-300 hover:bg-white/5 hover:text-white transition-colors"
               >
                 Cancel
               </button>
