@@ -1,10 +1,11 @@
 import type { Metadata } from "next";
 import { AuthProvider } from "../context/authContext";
 import { ThemeProvider } from "../context/themeContext";
-import { Inter } from "next/font/google";
+import { Inter, Fraunces } from "next/font/google";
 import "./globals.css";
 
 const inter = Inter({ subsets: ["latin"] });
+const fraunces = Fraunces({ subsets: ["latin"], variable: "--font-fraunces" });
 
 export const metadata: Metadata = {
   title: "KMegle – Free Random Video Chat | Talk to Strangers Instantly",
@@ -85,7 +86,7 @@ export default function RootLayout({
   return (
     <html lang="en">
       <head>
-        <meta name="theme-color" content="#0a0a0f" />
+        <meta name="theme-color" content="#f7f2ea" />
         <script
           type="application/ld+json"
           dangerouslySetInnerHTML={{
@@ -107,7 +108,7 @@ export default function RootLayout({
           }}
         />
       </head>
-      <body className={inter.className}>
+      <body className={`${inter.className} ${fraunces.variable}`}>
   <AuthProvider>
     <ThemeProvider>
       {children}
