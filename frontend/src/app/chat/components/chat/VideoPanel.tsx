@@ -217,17 +217,17 @@ export default function VideoPanel({
       )}
 
       {/* Action Controls */}
-      <div className="absolute bottom-4 lg:bottom-6 left-1/2 -translate-x-1/2 flex items-center gap-2 lg:gap-3 p-2 rounded-full bg-black/70 backdrop-blur-xl border border-white/15 opacity-100 z-40 shadow-2xl max-w-[95vw] overflow-x-auto">
+      <div className="absolute bottom-4 lg:bottom-6 left-1/2 -translate-x-1/2 flex flex-wrap justify-center items-center gap-2 lg:gap-3 p-2 rounded-2xl bg-black/70 backdrop-blur-xl border border-white/15 opacity-100 z-40 shadow-2xl w-max max-w-[calc(100%-1rem)]">
         <button
           onClick={onToggleSearch}
-          disabled={isConnecting || isCooldownActive}
+          disabled={isCooldownActive}
           className={`min-h-11 px-5 lg:px-8 py-2.5 lg:py-3 rounded-full font-bold text-xs lg:text-sm transition-all whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed ${
             isCooldownActive
               ? "bg-red-500/30 text-red-300 border border-red-500/30"
               : socketConnected
               ? "bg-red-500/20 hover:bg-red-500/30 text-red-300 border border-red-500/30"
               : isConnecting
-              ? "bg-indigo-600/50 text-white/70 cursor-wait"
+              ? "bg-indigo-600 text-white"
               : "bg-indigo-600 hover:bg-indigo-500 text-white shadow-[0_0_20px_rgba(99,102,241,0.4)]"
           }`}
         >
@@ -236,7 +236,7 @@ export default function VideoPanel({
             : socketConnected
             ? "Stop"
             : isConnecting
-            ? "Connecting..."
+            ? "Cancel"
             : "Start"}
         </button>
 
