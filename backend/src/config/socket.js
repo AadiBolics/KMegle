@@ -7,6 +7,8 @@ const banCheck = require("../middleware/banCheck");
 function createSocketServer(server) {
   const allowedOrigins = [
     "http://localhost:3000",
+    // Canonical production frontend. Keep this exact origin, never a wildcard.
+    "https://kmegle.aadinadhan.me",
     ...(process.env.FRONTEND_URL
       ? process.env.FRONTEND_URL.split(",").map((url) => url.trim())
       : []),
