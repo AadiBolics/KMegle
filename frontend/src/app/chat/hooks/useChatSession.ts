@@ -70,6 +70,7 @@ export function useChatSession() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [chatInput, setChatInput] = useState("");
   const [isConnecting, setIsConnecting] = useState(false);
+  const searchAttemptRef = useRef(0);
   // True whenever `status` describes a failure rather than progress — lets the UI
   // suppress the "connecting" spinner on error states without parsing status text.
   const [isError, setIsError] = useState(false);
@@ -136,6 +137,8 @@ export function useChatSession() {
   );
 
   const cleanupConnection = useCallback(() => {
+    searchAttemptRef.current += 1;
+    setIsConnecting(false);
     const currentSocket = socketRef.current;
 
     if (currentSocket) {
@@ -960,6 +963,7 @@ export function useChatSession() {
         }
       }
 
+      const attempt = ++searchAttemptRef.current;
       setIsError(false);
       setStatus("Requesting camera...");
 
@@ -992,6 +996,10 @@ export function useChatSession() {
             },
           );
 
+        if (attempt !== searchAttemptRef.current) {
+          stream.getTracks().forEach((track) => track.stop());
+          return;
+        }
         setLocalStream(stream);
         localStreamRef.current = stream;
 
@@ -1004,6 +1012,7 @@ export function useChatSession() {
         );
 
         await prefetchIceConfig();
+        if (attempt !== searchAttemptRef.current) return;
 
         // ----------------------------------
         // FIREBASE TOKEN
@@ -1011,6 +1020,7 @@ export function useChatSession() {
 
         // Fail early with a clear error if the account can't get a token.
         await user.getIdToken();
+        if (attempt !== searchAttemptRef.current) return;
 
         // ----------------------------------
         // SOCKET.IO
@@ -1040,6 +1050,7 @@ export function useChatSession() {
           stream,
         );
       } catch (error) {
+        if (attempt !== searchAttemptRef.current) return;
         console.error(
           "Media / connection error:",
           error,
@@ -1115,13 +1126,13 @@ export function useChatSession() {
 
   const toggleSearch = useCallback(
     async () => {
-      if (socketRef.current) {
+      if (socketRef.current || isConnecting) {
         stopSearch();
       } else {
         await startSearch();
       }
     },
-    [startSearch, stopSearch],
+    [startSearch, stopSearch, isConnecting],
   );
 
   // ----------------------------------------
