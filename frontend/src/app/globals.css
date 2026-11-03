@@ -2,7 +2,12 @@
 
 html,
 body {
-  background-color: #0a0a0f;
+  background-color: #f7f2ea;
+}
+
+/* Paper direction: serif display face for the wordmark and headings. */
+.font-display {
+  font-family: var(--font-fraunces), Georgia, "Times New Roman", serif;
 }
 
 /* Hides the scrollbar while keeping the element scrollable — used by the
