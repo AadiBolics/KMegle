@@ -4,7 +4,8 @@ const express = require("express");
 const http = require("http");
 const cors = require("cors");
 const helmet = require("helmet");
-const rateLimit = require("express-rate-limit");
+const { rateLimit, ipKeyGenerator } = require("express-rate-limit");
+const { verifyFirebaseToken } = require("./middleware/authHelpers");
 
 const createSocketServer = require("./config/socket");
 const routes = require("./routes");
@@ -57,21 +58,44 @@ app.use(express.json());
 // Rate Limiting (KMEGLE-SEC-003)
 // --------------------------------------------------
 
-const generalLimiter = rateLimit({
-  windowMs: 60 * 1000,
-  max: 100,
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: { error: "Too many requests, please try again later." },
-});
+// Only Firebase-verified identity can choose an account bucket. Never key on a
+// raw Authorization header, supplied UID, or an unverified decoded token.
+async function identifyApiUser(req, res, next) {
+  const header = req.headers.authorization;
+  if (typeof header === "string" && header.startsWith("Bearer ")) {
+    try {
+      req.user = await verifyFirebaseToken(header.substring(7));
 
-const strictLimiter = rateLimit({
-  windowMs: 60 * 1000,
-  max: 20,
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: { error: "Rate limit exceeded for this endpoint." },
-});
+    } catch (_) {
+      // Route auth still returns the normal 401/403. Invalid tokens share the
+      // IP bucket, so rotating garbage tokens cannot evade the anonymous cap.
+    }
+  }
+  next();
+}
+
+function apiRateLimitKey(req) {
+  if (req.user?.uid) return `user:${req.user.uid}`;
+  return `ip:${ipKeyGenerator(req.ip)}`;
+}
+
+function makeLimiter(limit, message) {
+  return rateLimit({
+    windowMs: 60 * 1000,
+    limit,
+    keyGenerator: apiRateLimitKey,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: message },
+  });
+}
+
+const generalLimiter = makeLimiter(100, "Too many requests, please try again later.");
+const strictLimiter = makeLimiter(20, "Rate limit exceeded for this endpoint.");
+
+// Resolve identity before BOTH limits so neither collapses a campus NAT into
+// one bucket. Unauthenticated/invalid-token traffic remains IP limited.
+app.use("/api", identifyApiUser);
 
 app.use("/api/turn-credentials", strictLimiter);
 app.use("/api/admin", strictLimiter);
