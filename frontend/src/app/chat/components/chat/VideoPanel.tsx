@@ -13,6 +13,7 @@ interface VideoPanelProps {
   isError: boolean;
   status: string;
   isFullscreen: boolean;
+  isSelfExpanded: boolean;
   isWarning?: boolean;
   isRemoteWarning?: boolean;
   isCooldownActive?: boolean;
@@ -23,6 +24,7 @@ interface VideoPanelProps {
   onBlock: () => void;
   onReport?: () => void;
   onToggleFullscreen: () => void;
+  onToggleSelfExpand: () => void;
 }
 
 export default function VideoPanel({
@@ -35,6 +37,7 @@ export default function VideoPanel({
   isError,
   status,
   isFullscreen,
+  isSelfExpanded,
   isWarning = false,
   isRemoteWarning = false,
   isCooldownActive = false,
@@ -45,6 +48,7 @@ export default function VideoPanel({
   onBlock,
   onReport,
   onToggleFullscreen,
+  onToggleSelfExpand,
 }: VideoPanelProps) {
   const handleBlock = () => {
     if (window.confirm("Block this user? You won't be matched with them again.")) {
@@ -71,7 +75,7 @@ export default function VideoPanel({
           ? "fixed inset-0 z-[100] w-screen h-[100dvh]"
           : "w-full lg:w-[70%] h-[55dvh] lg:h-full"
       } overflow-hidden transition-all duration-500 ${
-        isDarkMode ? "bg-[#0a0a0f]" : "bg-gray-900"
+        isDarkMode ? "bg-[#221C16]" : "bg-gray-900"
       }`}
     >
       {/* Remote Video */}
@@ -79,8 +83,12 @@ export default function VideoPanel({
         ref={remoteVideoRef}
         autoPlay
         playsInline
-        className={`absolute inset-0 w-full h-full object-cover transform scale-x-[-1] transition-all duration-300 ease-in-out ${
-          remoteStream ? "opacity-100 z-10" : "opacity-0 z-0"
+        className={`object-cover transition-all duration-300 ease-in-out ${
+          isSelfExpanded && remoteStream
+            ? "absolute top-4 right-4 lg:top-6 lg:right-6 w-24 lg:w-40 aspect-[3/4] rounded-2xl shadow-2xl border border-white/20 z-[120] bg-black opacity-100"
+            : `absolute inset-0 w-full h-full ${
+                remoteStream ? "opacity-100 z-10" : "opacity-0 z-0"
+              }`
         } ${isRemoteWarning ? "blur-[32px] brightness-50 ring-4 ring-red-500/70" : ""}`}
       />
 
@@ -91,15 +99,48 @@ export default function VideoPanel({
         playsInline
         muted
         className={`object-cover transform scale-x-[-1] transition-all duration-500 ease-in-out ${
-          remoteStream
-            ? "absolute top-4 right-4 lg:top-6 lg:right-6 w-24 lg:w-40 aspect-[3/4] rounded-2xl shadow-2xl border border-white/20 z-30 bg-black"
-            : `absolute inset-0 w-full h-full ${
-                socketConnected
-                  ? "blur-2xl brightness-50 scale-110 z-0"
-                  : "brightness-75 z-0"
-              }`
+          isSelfExpanded && remoteStream
+            ? "fixed inset-0 z-[110] w-screen h-screen supports-[height:100dvh]:h-[100dvh] bg-black"
+            : remoteStream
+              ? "absolute top-16 right-4 lg:top-20 lg:right-6 w-24 lg:w-40 aspect-[3/4] rounded-2xl shadow-2xl border border-white/20 z-30 bg-black"
+              : `absolute inset-0 w-full h-full ${
+                  socketConnected
+                    ? "blur-2xl brightness-50 scale-110 z-0"
+                    : "brightness-75 z-0"
+                }`
         } ${isWarning ? "blur-[24px] brightness-75 ring-4 ring-amber-500/80" : ""}`}
       />
+
+      {/* Expand own video to full screen (sits over the self-view corner tile) */}
+      {remoteStream && !isSelfExpanded && (
+        <div className="absolute top-16 right-4 lg:top-20 lg:right-6 w-24 lg:w-40 aspect-[3/4] z-40 pointer-events-none">
+          <button
+            onClick={onToggleSelfExpand}
+            className="absolute left-1.5 bottom-1.5 pointer-events-auto bg-black/60 hover:bg-black/80 backdrop-blur-md border border-white/25 p-1.5 rounded-lg text-white transition-all"
+            title="Make your video full screen"
+            aria-label="Make your video full screen"
+          >
+            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" />
+            </svg>
+          </button>
+        </div>
+      )}
+
+      {/* Back to the call layout when own video is full screen */}
+      {isSelfExpanded && remoteStream && (
+        <button
+          onClick={onToggleSelfExpand}
+          className="fixed top-4 left-4 lg:top-6 lg:left-6 z-[130] bg-black/60 hover:bg-black/80 backdrop-blur-md border border-white/25 px-3.5 py-2 rounded-full text-white text-xs font-bold transition-all flex items-center gap-1.5"
+          title="Back to the call layout"
+          aria-label="Exit full-screen self view"
+        >
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M4 14h6m0 0v6m0-6l-7 7m17-11h-6m0 0V4m0 6l7-7m-7 17v-6m0 0h6m-6 0l7 7M4 10h6m0 0V4m0 6l-7-7" />
+          </svg>
+          Back to call
+        </button>
+      )}
 
       {/* Warning Phase Banner — local sender */}
       {isWarning && (
@@ -195,10 +236,10 @@ export default function VideoPanel({
             connectionPhase === "waiting" ||
             connectionPhase === "negotiating") ? (
             <>
-              <div className="w-12 h-12 lg:w-16 lg:h-16 border-4 border-indigo-500/30 border-t-indigo-500 rounded-full animate-spin mb-4 lg:mb-6 shadow-[0_0_30px_rgba(99,102,241,0.5)]" />
+              <div className="w-12 h-12 lg:w-16 lg:h-16 border-4 border-[#C24A17]/30 border-t-[#C24A17] rounded-full animate-spin mb-4 lg:mb-6" />
               <p
                 aria-live="polite"
-                className="text-indigo-200 font-medium tracking-wide animate-pulse text-xs lg:text-base"
+                className="text-[#EDE4D6] font-medium tracking-wide animate-pulse text-xs lg:text-base"
               >
                 {status}
               </p>
@@ -217,7 +258,7 @@ export default function VideoPanel({
       )}
 
       {/* Action Controls */}
-      <div className="absolute bottom-4 lg:bottom-6 left-1/2 -translate-x-1/2 flex flex-wrap justify-center items-center gap-2 lg:gap-3 p-2 rounded-2xl bg-black/70 backdrop-blur-xl border border-white/15 opacity-100 z-40 shadow-2xl w-max max-w-[calc(100%-1rem)]">
+      <div className={`absolute bottom-4 lg:bottom-6 left-1/2 -translate-x-1/2 flex flex-wrap justify-center items-center gap-2 lg:gap-3 p-2 rounded-2xl bg-black/70 backdrop-blur-xl border border-white/15 opacity-100 shadow-2xl w-max max-w-[calc(100%-1rem)] ${isSelfExpanded ? "z-[120]" : "z-40"}`}>
         <button
           onClick={onToggleSearch}
           disabled={isCooldownActive}
@@ -227,8 +268,8 @@ export default function VideoPanel({
               : socketConnected
               ? "bg-red-500/20 hover:bg-red-500/30 text-red-300 border border-red-500/30"
               : isConnecting
-              ? "bg-indigo-600 text-white"
-              : "bg-indigo-600 hover:bg-indigo-500 text-white shadow-[0_0_20px_rgba(99,102,241,0.4)]"
+              ? "bg-[#C24A17] text-white"
+              : "bg-[#C24A17] hover:bg-[#A93E13] text-white"
           }`}
         >
           {isCooldownActive
@@ -246,7 +287,7 @@ export default function VideoPanel({
             className="min-h-11 bg-white/15 hover:bg-white/25 text-white px-4 lg:px-6 py-2.5 lg:py-3 rounded-full font-bold text-xs lg:text-sm transition-all flex items-center gap-1.5 whitespace-nowrap"
           >
             Next
-            <svg className="w-4 h-4 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <svg className="w-4 h-4 text-[#E9A583]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M13 5l7 7-7 7M5 5l7 7-7 7" />
             </svg>
           </button>
