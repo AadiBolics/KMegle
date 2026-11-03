@@ -29,8 +29,8 @@ export default function SettingsPage() {
       <main
         className={`min-h-screen flex items-center justify-center ${
           isDarkMode
-            ? "bg-[#0a0a0f] text-white"
-            : "bg-gray-50 text-gray-900"
+            ? "bg-[#F7F2EA] text-[#211B14]"
+            : "bg-[#F7F2EA] text-[#211B14]"
         }`}
       >
         <p className={isDarkMode ? "text-gray-400" : "text-gray-500"}>
@@ -49,8 +49,8 @@ export default function SettingsPage() {
     <main
       className={`min-h-screen px-4 py-8 transition-colors duration-300 ${
         isDarkMode
-          ? "bg-[#0a0a0f] text-white"
-          : "bg-gray-50 text-gray-900"
+          ? "bg-[#F7F2EA] text-[#211B14]"
+          : "bg-[#F7F2EA] text-[#211B14]"
       }`}
     >
       <div className="mx-auto w-full max-w-2xl">
@@ -61,7 +61,7 @@ export default function SettingsPage() {
             onClick={() => router.push("/chat")}
             className={`w-10 h-10 rounded-full border flex items-center justify-center transition ${
               isDarkMode
-                ? "bg-white/5 border-white/10 hover:bg-white/10"
+                ? "bg-[#FFFDF9] border-[#E5DCD0] hover:bg-[#F7F2EA]"
                 : "bg-white border-gray-200 hover:bg-gray-100"
             }`}
             aria-label="Back to chat"
@@ -109,8 +109,8 @@ export default function SettingsPage() {
           <div
             className={`border rounded-2xl p-5 transition-colors ${
               isDarkMode
-                ? "bg-[#13141a] border-white/10"
-                : "bg-white border-gray-200 shadow-sm"
+                ? "bg-[#FFFDF9] border-[#E5DCD0] shadow-sm"
+                : "bg-[#FFFDF9] border-[#E5DCD0] shadow-sm"
             }`}
           >
             <div className="flex items-center gap-4">
@@ -121,7 +121,7 @@ export default function SettingsPage() {
                   className="w-12 h-12 rounded-full"
                 />
               ) : (
-                <div className="w-12 h-12 rounded-full bg-indigo-600 flex items-center justify-center text-lg font-bold text-white">
+                <div className="w-12 h-12 rounded-full bg-[#C24A17] flex items-center justify-center text-lg font-bold text-white">
                   {user.email?.charAt(0).toUpperCase() || "U"}
                 </div>
               )}
@@ -152,16 +152,16 @@ export default function SettingsPage() {
           <div
             className={`border rounded-2xl overflow-hidden ${
               isDarkMode
-                ? "bg-[#13141a] border-white/10"
-                : "bg-white border-gray-200 shadow-sm"
+                ? "bg-[#FFFDF9] border-[#E5DCD0] shadow-sm"
+                : "bg-[#FFFDF9] border-[#E5DCD0] shadow-sm"
             }`}
           >
             <button
               onClick={() => router.push("/settings/blocked")}
               className={`w-full flex items-center justify-between p-5 transition text-left ${
                 isDarkMode
-                  ? "hover:bg-white/5"
-                  : "hover:bg-gray-50"
+                  ? "hover:bg-[#F7F2EA]"
+                  : "hover:bg-[#F7F2EA]"
               }`}
             >
               <div>
@@ -204,8 +204,8 @@ export default function SettingsPage() {
           <div
             className={`border rounded-2xl overflow-hidden ${
               isDarkMode
-                ? "bg-[#13141a] border-white/10"
-                : "bg-white border-gray-200 shadow-sm"
+                ? "bg-[#FFFDF9] border-[#E5DCD0] shadow-sm"
+                : "bg-[#FFFDF9] border-[#E5DCD0] shadow-sm"
             }`}
           >
             {/* Terms of Service */}
@@ -213,7 +213,7 @@ export default function SettingsPage() {
               <button
                 onClick={() => togglePolicy("terms")}
                 className={`w-full flex items-center justify-between p-5 text-left transition ${
-                  isDarkMode ? "hover:bg-white/5" : "hover:bg-gray-50"
+                  isDarkMode ? "hover:bg-[#F7F2EA]" : "hover:bg-[#F7F2EA]"
                 }`}
               >
                 <div>
@@ -247,7 +247,7 @@ export default function SettingsPage() {
                 <div
                   className={`px-5 pb-5 pt-2 text-sm border-t leading-relaxed ${
                     isDarkMode
-                      ? "border-white/5 text-gray-300 bg-white/[0.02]"
+                      ? "border-[#E5DCD0] text-[#4A4238] bg-[#FFFDF9]"
                       : "border-gray-100 text-gray-700 bg-gray-50/50"
                   }`}
                 >
@@ -287,7 +287,7 @@ export default function SettingsPage() {
             <div
               className={
                 isDarkMode
-                  ? "border-t border-white/5"
+                  ? "border-t border-[#E5DCD0]"
                   : "border-t border-gray-100"
               }
             />
@@ -297,7 +297,7 @@ export default function SettingsPage() {
               <button
                 onClick={() => togglePolicy("guidelines")}
                 className={`w-full flex items-center justify-between p-5 text-left transition ${
-                  isDarkMode ? "hover:bg-white/5" : "hover:bg-gray-50"
+                  isDarkMode ? "hover:bg-[#F7F2EA]" : "hover:bg-[#F7F2EA]"
                 }`}
               >
                 <div>
@@ -331,7 +331,7 @@ export default function SettingsPage() {
                 <div
                   className={`px-5 pb-5 pt-2 text-sm border-t leading-relaxed ${
                     isDarkMode
-                      ? "border-white/5 text-gray-300 bg-white/[0.02]"
+                      ? "border-[#E5DCD0] text-[#4A4238] bg-[#FFFDF9]"
                       : "border-gray-100 text-gray-700 bg-gray-50/50"
                   }`}
                 >
@@ -371,7 +371,7 @@ export default function SettingsPage() {
             <div
               className={
                 isDarkMode
-                  ? "border-t border-white/5"
+                  ? "border-t border-[#E5DCD0]"
                   : "border-t border-gray-100"
               }
             />
@@ -381,7 +381,7 @@ export default function SettingsPage() {
               <button
                 onClick={() => togglePolicy("privacy")}
                 className={`w-full flex items-center justify-between p-5 text-left transition ${
-                  isDarkMode ? "hover:bg-white/5" : "hover:bg-gray-50"
+                  isDarkMode ? "hover:bg-[#F7F2EA]" : "hover:bg-[#F7F2EA]"
                 }`}
               >
                 <div>
@@ -415,11 +415,11 @@ export default function SettingsPage() {
                 <div
                   className={`px-5 pb-5 pt-2 text-sm border-t leading-relaxed ${
                     isDarkMode
-                      ? "border-white/5 text-gray-300 bg-white/[0.02]"
+                      ? "border-[#E5DCD0] text-[#4A4238] bg-[#FFFDF9]"
                       : "border-gray-100 text-gray-700 bg-gray-50/50"
                   }`}
                 >
-<div className="space-y-4 text-sm leading-relaxed text-gray-300">
+<div className="space-y-4 text-sm leading-relaxed text-[#4A4238]">
 <p>KMegle uses Google sign-in through Firebase Authentication. The service receives your account ID and email. Its database stores your account ID and a keyed hash of your email; service logs may include your email and account ID.</p>
 <p>Video and audio use WebRTC. Connections may be direct or use a TURN relay when needed. A direct connection can reveal your public IP address to the other participant. KMegle&apos;s reviewed application code does not record video or audio, but another participant can record their screen.</p>
 <p>For safety, KMegle stores reports, report reasons, blocks and violation records linked to account IDs. Automated content checks run in the browser during a session.</p>

@@ -49,14 +49,14 @@ export default function LoginPage() {
     return (
       <main
         className={`flex min-h-screen items-center justify-center transition-colors duration-300 ${
-          isDarkMode ? "bg-[#0a0a0f]" : "bg-gray-50"
+          isDarkMode ? "bg-[#221C16]" : "bg-[#F7F2EA]"
         }`}
       >
         <div
           className={`w-8 h-8 border-4 rounded-full animate-spin ${
             isDarkMode
-              ? "border-indigo-500/30 border-t-indigo-500"
-              : "border-indigo-300 border-t-indigo-600"
+              ? "border-[#C24A17]/30 border-t-[#C24A17]"
+              : "border-[#C24A17]/30 border-t-[#C24A17]"
           }`}
         />
       </main>
@@ -66,18 +66,18 @@ export default function LoginPage() {
   return (
     <main
       className={`flex min-h-screen items-center justify-center p-4 transition-colors duration-300 ${
-        isDarkMode ? "bg-[#0a0a0f] text-white" : "bg-gray-50 text-gray-900"
+        isDarkMode ? "bg-[#221C16] text-[#F7F2EA]" : "bg-[#F7F2EA] text-[#211B14]"
       }`}
     >
       <div
         className={`w-full max-w-md rounded-3xl border p-8 shadow-2xl transition-colors duration-300 ${
           isDarkMode
-            ? "bg-[#13141a]/80 backdrop-blur-2xl border-white/10"
-            : "bg-white border-gray-200"
+            ? "bg-[#1B1611] border-[#3A3128]"
+            : "bg-[#FFFDF9] border-[#E5DCD0]"
         }`}
       >
-        <h1 className="text-3xl font-black tracking-tighter">
-          KMegle<span className="text-indigo-500">.</span>
+        <h1 className="font-display text-3xl font-bold tracking-tight">
+          kmegle<span className="text-[#C24A17]">.</span>
         </h1>
 
         <p
@@ -91,11 +91,11 @@ export default function LoginPage() {
         <button
           onClick={handleLogin}
           disabled={loggingIn}
-          className="mt-8 w-full flex items-center justify-center gap-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 px-4 py-3.5 font-bold text-white transition-all active:scale-95 disabled:opacity-60 disabled:cursor-not-allowed shadow-[0_0_30px_rgba(99,102,241,0.4)]"
+          className="mt-8 w-full flex items-center justify-center gap-3 rounded-xl bg-[#C24A17] hover:bg-[#A93E13] px-4 py-3.5 font-bold text-[#FFFDF9] transition-all active:scale-95 disabled:opacity-60 disabled:cursor-not-allowed"
         >
           {loggingIn ? (
             <>
-              <div className="w-4 h-4 border-2 border-indigo-300 border-t-white rounded-full animate-spin" />
+              <div className="w-4 h-4 border-2 border-[#E9A583] border-t-white rounded-full animate-spin" />
               Opening Google...
             </>
           ) : (
@@ -104,7 +104,7 @@ export default function LoginPage() {
         </button>
 
         {error && (
-          <p className="mt-4 text-center text-sm text-red-400">{error}</p>
+          <p className="mt-4 text-center text-sm text-red-500">{error}</p>
         )}
 
         <p

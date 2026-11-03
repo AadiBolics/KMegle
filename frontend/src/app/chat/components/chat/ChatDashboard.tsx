@@ -55,7 +55,21 @@ export default function ChatDashboard() {
   });
 
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [wantsSelfExpanded, setWantsSelfExpanded] = useState(false);
   const { isDarkMode, toggleDarkMode } = useTheme();
+
+  // Full-screen self view only makes sense during a call; it ends the
+  // moment the remote stream drops, and Escape leaves it too.
+  const isSelfExpanded = wantsSelfExpanded && !!remoteStream;
+
+  useEffect(() => {
+    if (!isSelfExpanded) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setWantsSelfExpanded(false);
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [isSelfExpanded]);
 
   useEffect(() => {
     if (localVideoRef.current && localStream) {
@@ -98,14 +112,14 @@ export default function ChatDashboard() {
     return (
       <div
         className={`h-[100dvh] w-full flex items-center justify-center font-sans transition-colors duration-300 ${
-          isDarkMode ? "bg-[#0a0a0f] text-white" : "bg-gray-50 text-gray-900"
+          isDarkMode ? "bg-[#221C16] text-[#F7F2EA]" : "bg-[#F7F2EA] text-[#211B14]"
         }`}
       >
         <div
           className={`w-8 h-8 border-4 rounded-full animate-spin ${
             isDarkMode
-              ? "border-indigo-500/30 border-t-indigo-500"
-              : "border-indigo-300 border-t-indigo-600"
+              ? "border-[#C24A17]/30 border-t-[#C24A17]"
+              : "border-[#C24A17]/30 border-t-[#C24A17]"
           }`}
         />
       </div>
@@ -115,11 +129,11 @@ export default function ChatDashboard() {
   return (
     <div
       className={`h-[100dvh] w-full flex flex-col lg:flex-row overflow-hidden font-sans transition-colors duration-300 ${
-        isDarkMode ? "bg-[#0a0a0f] text-white" : "bg-gray-50 text-gray-900"
+        isDarkMode ? "bg-[#221C16] text-[#F7F2EA]" : "bg-[#F7F2EA] text-[#211B14]"
       }`}
     >
       <ChatHeader
-        isFullscreen={isFullscreen}
+        isFullscreen={isFullscreen || isSelfExpanded}
         isDarkMode={isDarkMode}
         onToggleDarkMode={toggleDarkMode}
         onOpenSettings={handleOpenSettings}
@@ -135,6 +149,7 @@ export default function ChatDashboard() {
         isError={isError}
         status={status}
         isFullscreen={isFullscreen}
+        isSelfExpanded={isSelfExpanded}
         isWarning={isWarning}
         isRemoteWarning={isRemoteWarning}
         isCooldownActive={isCooldownActive}
@@ -145,6 +160,7 @@ export default function ChatDashboard() {
         onBlock={block}
         onReport={reportUser}
         onToggleFullscreen={() => setIsFullscreen((value) => !value)}
+        onToggleSelfExpand={() => setWantsSelfExpanded((value) => !value)}
       />
 
       <ChatSidebar
