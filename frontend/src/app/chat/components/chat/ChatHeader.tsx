@@ -18,8 +18,8 @@ export default function ChatHeader({
 
   return (
     <header className="absolute top-0 left-0 w-full p-4 lg:p-6 flex justify-between items-center z-40 bg-gradient-to-b from-black/60 to-transparent pointer-events-none">
-      <h1 className="text-2xl font-black text-white tracking-tighter drop-shadow-md pointer-events-auto">
-        KMegle<span className="text-indigo-500">.</span>
+      <h1 className="font-display text-2xl font-bold text-[#F7F2EA] tracking-tight drop-shadow-md pointer-events-auto">
+        kmegle<span className="text-[#E9A583]">.</span>
       </h1>
 
       <div className="flex items-center gap-3 pointer-events-auto">
