@@ -1,5 +1,5 @@
 import Link from "next/link";
-export default function PoliciesPage(){return <main className="min-h-screen bg-[#0a0a0f] text-gray-300 px-4 py-8"><div className="mx-auto max-w-2xl space-y-8"><Link href="/" className="inline-flex min-h-11 items-center underline text-indigo-300">Back to KMegle</Link><h1 className="text-3xl font-bold text-white">Terms &amp; Privacy</h1><section><h2 className="text-xl font-semibold text-white mb-4">Terms of Service</h2><div className="text-sm leading-relaxed">                  <div className="space-y-4">
+export default function PoliciesPage(){return <main className="min-h-screen bg-[#F7F2EA] text-[#4A4238] px-4 py-8"><div className="mx-auto max-w-2xl space-y-8"><Link href="/" className="inline-flex min-h-11 items-center underline text-[#C24A17]">Back to KMegle</Link><h1 className="font-display text-3xl font-bold text-[#211B14]">Terms &amp; Privacy</h1><section><h2 className="text-xl font-semibold text-[#211B14] mb-4">Terms of Service</h2><div className="text-sm leading-relaxed">                  <div className="space-y-4">
                     <div>
                       <h4 className="font-semibold text-base mb-1">1. Age Requirement</h4>
                       <p>
@@ -27,9 +27,9 @@ export default function PoliciesPage(){return <main className="min-h-screen bg-[
                         While KMegle does not record or store any video or audio streams, we cannot prevent third-party peers from using external screen recording software. Never share personally identifiable information (PII), financial details, or passwords during video chats.
                       </p>
                     </div>
-                  </div></div></section><section><h2 className="text-xl font-semibold text-white mb-4">Before you connect</h2><div className="space-y-4 text-sm leading-relaxed text-gray-300">
+                  </div></div></section><section><h2 className="text-xl font-semibold text-[#211B14] mb-4">Before you connect</h2><div className="space-y-4 text-sm leading-relaxed text-gray-300">
 <p>KMegle uses Google sign-in through Firebase Authentication. The service receives your account ID and email. Its database stores your account ID and a keyed hash of your email; service logs may include your email and account ID.</p>
 <p>Video and audio use WebRTC. Connections may be direct or use a TURN relay when needed. A direct connection can reveal your public IP address to the other participant. KMegle&apos;s reviewed application code does not record video or audio, but another participant can record their screen.</p>
 <p>For safety, KMegle stores reports, report reasons, blocks and violation records linked to account IDs. Automated content checks run in the browser during a session.</p>
 <p>Retention periods and the policies of hosting, authentication and relay providers still need to be confirmed. Do not share passwords, financial details or other private information in a chat.</p>
-</div></section><p className="text-sm">Support: <a className="underline text-indigo-300 break-all" href="mailto:aadinadhan17@gmail.com">aadinadhan17@gmail.com</a></p></div></main>}
+</div></section><p className="text-sm">Support: <a className="underline text-[#C24A17] break-all" href="mailto:aadinadhan17@gmail.com">aadinadhan17@gmail.com</a></p></div></main>}
