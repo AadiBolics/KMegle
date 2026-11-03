@@ -71,6 +71,7 @@ export function useChatSession() {
   const [chatInput, setChatInput] = useState("");
   const [isConnecting, setIsConnecting] = useState(false);
   const searchAttemptRef = useRef(0);
+  const reportTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // True whenever `status` describes a failure rather than progress — lets the UI
   // suppress the "connecting" spinner on error states without parsing status text.
   const [isError, setIsError] = useState(false);
@@ -138,6 +139,10 @@ export function useChatSession() {
 
   const cleanupConnection = useCallback(() => {
     searchAttemptRef.current += 1;
+    if (reportTimerRef.current) {
+      clearTimeout(reportTimerRef.current);
+      reportTimerRef.current = null;
+    }
     setIsConnecting(false);
     const currentSocket = socketRef.current;
 
@@ -1193,15 +1198,40 @@ export function useChatSession() {
 
   const reportUser = useCallback((reason: string = "Inappropriate content / behavior") => {
     const activeSocket = socketRef.current;
-    if (!activeSocket || !roomIdRef.current) return;
+    const reportedRoomId = roomIdRef.current;
+    if (!activeSocket || !reportedRoomId || reportTimerRef.current) return;
 
-    setStatus("Reporting user...");
-    activeSocket.emit("report_user", {
-      roomId: roomIdRef.current,
-      reason,
-    });
-    cleanupConnection();
-  }, [cleanupConnection]);
+    let settled = false;
+    const finishReport = (message: string, failed: boolean) => {
+      if (settled) return;
+      settled = true;
+      activeSocket.off("user_reported", onReported);
+      activeSocket.off("report_failed", onFailed);
+      // A stop or newer search must not have its state overwritten by this reply.
+      if (socketRef.current !== activeSocket || !reportTimerRef.current) return;
+      cleanupConnection();
+      setIsError(failed);
+      setStatus(message);
+    };
+    const onReported = () => finishReport("Report received. Chat ended.", false);
+    const onFailed = () => finishReport("Report could not be confirmed. Chat ended. Contact support if needed.", true);
+    activeSocket.once("user_reported", onReported);
+    activeSocket.once("report_failed", onFailed);
+    reportTimerRef.current = setTimeout(() => finishReport("Report receipt was not confirmed. Chat ended. Contact support if needed.", true), 8000);
+
+    setStatus("Sending report. Ending chat...");
+    // Stop media immediately, but keep room membership until the server handles
+    // the report. Leaving first can delete the room before it saves the report.
+    roomIdRef.current = null;
+    setRoomId(null);
+    clearPeerConnection();
+    localStreamRef.current?.getTracks().forEach((track) => track.stop());
+    localStreamRef.current = null;
+    setLocalStream(null);
+    remoteStreamRef.current = null;
+    setRemoteStream(null);
+    activeSocket.emit("report_user", { roomId: reportedRoomId, reason });
+  }, [cleanupConnection, clearPeerConnection]);
 
   // ----------------------------------------
   // SEND MESSAGE
