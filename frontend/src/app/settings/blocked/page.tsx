@@ -105,8 +105,8 @@ export default function BlockedUsersPage() {
       <main
         className={`min-h-screen flex items-center justify-center ${
           isDarkMode
-            ? "bg-[#0a0a0f] text-white"
-            : "bg-gray-50 text-gray-900"
+            ? "bg-[#F7F2EA] text-[#211B14]"
+            : "bg-[#F7F2EA] text-[#211B14]"
         }`}
       >
         <p
@@ -130,8 +130,8 @@ export default function BlockedUsersPage() {
     <main
       className={`min-h-screen px-4 py-8 transition-colors duration-300 ${
         isDarkMode
-          ? "bg-[#0a0a0f] text-white"
-          : "bg-gray-50 text-gray-900"
+          ? "bg-[#F7F2EA] text-[#211B14]"
+          : "bg-[#F7F2EA] text-[#211B14]"
       }`}
     >
       <div className="mx-auto w-full max-w-2xl">
@@ -141,7 +141,7 @@ export default function BlockedUsersPage() {
             onClick={() => router.push("/settings")}
             className={`w-10 h-10 rounded-full border flex items-center justify-center transition ${
               isDarkMode
-                ? "bg-white/5 border-white/10 hover:bg-white/10"
+                ? "bg-[#FFFDF9] border-[#E5DCD0] hover:bg-[#F7F2EA]"
                 : "bg-white border-gray-200 hover:bg-gray-100"
             }`}
             aria-label="Back to settings"
@@ -196,8 +196,8 @@ export default function BlockedUsersPage() {
           <div
             className={`rounded-2xl border p-8 text-center ${
               isDarkMode
-                ? "bg-[#13141a] border-white/10"
-                : "bg-white border-gray-200 shadow-sm"
+                ? "bg-[#FFFDF9] border-[#E5DCD0] shadow-sm"
+                : "bg-[#FFFDF9] border-[#E5DCD0] shadow-sm"
             }`}
           >
             <h2 className="font-semibold text-lg">
@@ -218,8 +218,8 @@ export default function BlockedUsersPage() {
           <div
             className={`border rounded-2xl overflow-hidden ${
               isDarkMode
-                ? "bg-[#13141a] border-white/10"
-                : "bg-white border-gray-200 shadow-sm"
+                ? "bg-[#FFFDF9] border-[#E5DCD0] shadow-sm"
+                : "bg-[#FFFDF9] border-[#E5DCD0] shadow-sm"
             }`}
           >
             {blockedUsers.map((blockedUser, index) => (
@@ -228,7 +228,7 @@ export default function BlockedUsersPage() {
                 className={`flex items-center justify-between gap-4 p-5 ${
                   index !== blockedUsers.length - 1
                     ? isDarkMode
-                      ? "border-b border-white/5"
+                      ? "border-b border-[#E5DCD0]"
                       : "border-b border-gray-100"
                     : ""
                 }`}
@@ -237,8 +237,8 @@ export default function BlockedUsersPage() {
                   <div
                     className={`w-11 h-11 rounded-full flex items-center justify-center shrink-0 ${
                       isDarkMode
-                        ? "bg-white/10"
-                        : "bg-gray-100"
+                        ? "bg-[#F7F2EA]"
+                        : "bg-[#F7F2EA]"
                     }`}
                   >
                     <svg
@@ -288,7 +288,7 @@ export default function BlockedUsersPage() {
                   }
                   className={`shrink-0 px-4 py-2 rounded-xl text-sm font-semibold transition ${
                     isDarkMode
-                      ? "bg-white/5 hover:bg-white/10 border border-white/10"
+                      ? "bg-[#FFFDF9] hover:bg-[#F7F2EA] border border-[#E5DCD0]"
                       : "bg-gray-50 hover:bg-gray-100 border border-gray-200"
                   } ${
                     unblocking ===
