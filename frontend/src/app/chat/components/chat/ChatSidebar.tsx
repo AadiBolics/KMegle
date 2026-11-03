@@ -46,7 +46,7 @@ export default function ChatSidebar({
           ? "absolute bottom-20 right-4 w-80 h-96 z-50 bg-black/80 backdrop-blur-xl rounded-2xl border border-white/10"
           : `flex-1 lg:w-[30%] lg:h-full flex flex-col transition-colors duration-300 ${
               isDarkMode
-                ? "bg-[#13141a] border-t lg:border-t-0 lg:border-l border-white/5"
+                ? "bg-[#1B1611] border-t lg:border-t-0 lg:border-l border-white/5"
                 : "bg-white border-t lg:border-t-0 lg:border-l border-gray-200"
             }`
       }`}
@@ -55,8 +55,8 @@ export default function ChatSidebar({
         <div
           className={`p-3 lg:p-4 border-b flex justify-between items-center shadow-sm z-10 ${
             isDarkMode
-              ? "bg-[#13141a] border-white/5"
-              : "bg-white border-gray-100"
+              ? "bg-[#1B1611] border-white/5"
+              : "bg-[#FFFDF9] border-[#E5DCD0]"
           }`}
         >
           <h2
@@ -123,7 +123,7 @@ export default function ChatSidebar({
             <span
               className={`px-3 lg:px-4 py-2 lg:py-2.5 max-w-[85%] break-words whitespace-pre-wrap text-xs lg:text-sm shadow-sm leading-relaxed ${
                 message.sender === "me"
-                  ? "bg-indigo-600 text-white rounded-2xl rounded-br-sm"
+                  ? "bg-[#C24A17] text-white rounded-2xl rounded-br-sm"
                   : message.sender === "system"
                     ? `text-[10px] lg:text-xs font-mono rounded-full px-3 lg:px-4 border text-center ${
                         isDarkMode
@@ -151,8 +151,8 @@ export default function ChatSidebar({
           isFullscreen
             ? "bg-transparent"
             : isDarkMode
-              ? "bg-[#13141a] border-t border-white/5"
-              : "bg-white border-t border-gray-100"
+              ? "bg-[#1B1611] border-t border-white/5"
+              : "bg-[#FFFDF9] border-t border-[#E5DCD0]"
         }`}
       >
         <div className="relative flex items-center shadow-sm rounded-full">
@@ -165,12 +165,12 @@ export default function ChatSidebar({
             onChange={(event) => setChatInput(event.target.value)}
             placeholder={remoteStream ? "Type a message..." : "Waiting..."}
             disabled={!remoteStream}
-            className={`w-full rounded-full pl-4 lg:pl-5 pr-11 lg:pr-12 py-3 lg:py-3.5 text-base lg:text-sm focus:outline-none focus:border-indigo-500/70 focus:ring-1 focus:ring-indigo-500/70 disabled:opacity-50 transition-all ${
+            className={`w-full rounded-full pl-4 lg:pl-5 pr-11 lg:pr-12 py-3 lg:py-3.5 text-base lg:text-sm focus:outline-none focus:border-[#C24A17]/70 focus:ring-1 focus:ring-[#C24A17]/70 disabled:opacity-50 transition-all ${
               isFullscreen
                 ? "bg-black/40 backdrop-blur-xl border border-white/20 text-white placeholder-gray-300"
                 : isDarkMode
-                  ? "bg-[#1e2028] border-transparent text-white placeholder-gray-500"
-                  : "bg-gray-100 border-gray-200 text-gray-900 placeholder-gray-500"
+                  ? "bg-[#2A231C] border-transparent text-white placeholder-gray-500"
+                  : "bg-[#F7F2EA] border-[#E5DCD0] text-[#211B14] placeholder-[#6B6156]"
             }`}
           />
 
@@ -178,7 +178,7 @@ export default function ChatSidebar({
             type="submit"
             aria-label="Send message"
             disabled={!remoteStream || !chatInput.trim()}
-            className="absolute right-1 w-8 h-8 lg:w-10 lg:h-10 flex items-center justify-center bg-indigo-600 hover:bg-indigo-500 rounded-full disabled:opacity-50 transition-all"
+            className="absolute right-1 w-8 h-8 lg:w-10 lg:h-10 flex items-center justify-center bg-[#C24A17] hover:bg-[#A93E13] rounded-full disabled:opacity-50 transition-all"
           >
             <svg
               className="w-3 h-3 lg:w-4 lg:h-4 text-white ml-0.5"
