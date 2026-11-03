@@ -262,7 +262,7 @@ export default function SettingsPage() {
                     <div>
                       <h4 className="font-semibold text-base mb-1">2. Peer-to-Peer (P2P) WebRTC Architecture</h4>
                       <p>
-                        KMegle connects users directly via WebRTC Peer-to-Peer protocols for real-time video and audio communication. By using KMegle, you understand and acknowledge that P2P technology inherently exchanges network connection details (including public IP addresses) directly between video chat peers.
+                        KMegle connects users via WebRTC, directly when possible or through a TURN relay when needed. Direct connections use Peer-to-Peer protocols for real-time video and audio communication. By using KMegle, you understand and acknowledge that P2P technology inherently exchanges network connection details (including public IP addresses) directly between video chat peers.
                       </p>
                     </div>
 
@@ -419,28 +419,12 @@ export default function SettingsPage() {
                       : "border-gray-100 text-gray-700 bg-gray-50/50"
                   }`}
                 >
-                  <div className="space-y-4">
-                    <div>
-                      <h4 className="font-semibold text-base mb-1"> Zero Video/Audio Data Retention</h4>
-                      <p>
-                        Video and audio streams are transmitted directly peer-to-peer using WebRTC. They are never recorded, captured, processed, or stored on KMegle servers.
-                      </p>
-                    </div>
-
-                    <div>
-                      <h4 className="font-semibold text-base mb-1"> Account & Security Data</h4>
-                      <p>
-                        We collect minimal identifiers (Firebase Auth UID, email if authenticated, and hashed IP addresses) solely for managing account state, authentication, and enforcing user safety bans.
-                      </p>
-                    </div>
-
-                    <div>
-                      <h4 className="font-semibold text-base mb-1"> Third-Party Services</h4>
-                      <p>
-                        KMegle uses Firebase Authentication for account management and TURN servers for NAT traversal where direct P2P connections cannot be established. No user data is sold or shared with advertisers.
-                      </p>
-                    </div>
-                  </div>
+<div className="space-y-4 text-sm leading-relaxed text-gray-300">
+<p>KMegle uses Google sign-in through Firebase Authentication. The service receives your account ID and email. Its database stores your account ID and a keyed hash of your email; service logs may include your email and account ID.</p>
+<p>Video and audio use WebRTC. Connections may be direct or use a TURN relay when needed. A direct connection can reveal your public IP address to the other participant. KMegle&apos;s reviewed application code does not record video or audio, but another participant can record their screen.</p>
+<p>For safety, KMegle stores reports, report reasons, blocks and violation records linked to account IDs. Automated content checks run in the browser during a session.</p>
+<p>Retention periods and the policies of hosting, authentication and relay providers still need to be confirmed. Do not share passwords, financial details or other private information in a chat.</p>
+</div>
                 </div>
               )}
             </div>
