@@ -1,13 +1,22 @@
 @import "tailwindcss";
 
+@custom-variant dark (&:where(.dark, .dark *));
+
 html,
 body {
   background-color: #f7f2ea;
 }
 
+html.dark,
+html.dark body {
+  background-color: #221c16;
+}
+
 /* Paper direction: serif display face for the wordmark and headings. */
 .font-display {
   font-family: var(--font-fraunces), Georgia, "Times New Roman", serif;
+  font-optical-sizing: auto;
+  letter-spacing: -0.01em;
 }
 
 /* Hides the scrollbar while keeping the element scrollable — used by the

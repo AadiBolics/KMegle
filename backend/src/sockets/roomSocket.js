@@ -2,6 +2,8 @@
 // Maps reporterId -> timestamp (ms) of their last accepted report.
 // Keeps a single reporter from spamming report_peer_nsfw_violation/report_user
 // to repeatedly disconnect+penalize whoever they're paired with.
+const presenceService = require("../services/presenceService");
+
 const lastReportAt = new Map();
 const REPORT_COOLDOWN_MS = 10 * 1000;
 
@@ -58,6 +60,7 @@ function registerRoomSocket(
         otherSocket.leave(roomId);
       }
 
+      presenceService.clearRoom(roomId, roomService);
       roomService.deleteRoom(roomId);
     } catch (err) {
       console.error("❌ Error blocking user:", err);
@@ -83,6 +86,7 @@ function registerRoomSocket(
         });
       }
       socket.leave(roomId);
+      presenceService.clearRoom(roomId, roomService);
       roomService.deleteRoom(roomId);
     }
 
@@ -123,6 +127,7 @@ function registerRoomSocket(
     });
 
     socket.leave(roomId);
+    presenceService.clearRoom(roomId, roomService);
     roomService.deleteRoom(roomId);
   });
 
@@ -167,6 +172,7 @@ function registerRoomSocket(
     });
 
     socket.leave(roomId);
+    presenceService.clearRoom(roomId, roomService);
     roomService.deleteRoom(roomId);
   });
 
@@ -175,27 +181,44 @@ function registerRoomSocket(
     if (!roomId) return;
     if (!roomService.isMember(roomId, socket.id)) return;
 
+    presenceService.clearRoom(roomId, roomService);
     socket.to(roomId).emit("stranger_disconnected");
     socket.leave(roomId);
     roomService.deleteRoom(roomId);
   });
 
-  // Disconnect handler
+  // Disconnect handler. A dropped transport is often a brief network blip,
+  // so rooms are HELD for a grace period (see presenceService) instead of
+  // being destroyed instantly; the partner is told to wait, and the room is
+  // only torn down if the user does not reconnect in time.
   socket.on("disconnect", () => {
     console.log(`🔴 Disconnected: ${socket.id}`);
     queue.remove(socket.id);
 
+    const userId = socket.user?.uid;
     const rooms = roomService.getRoomsForSocket(socket.id);
     for (const roomId of rooms) {
-      const room = roomService.getRoom(roomId);
-      if (!room) continue;
-
-      const otherUser = roomService.getOtherUser(roomId, socket.id);
-      if (otherUser) {
-        io.to(otherUser.socketId).emit("stranger_disconnected");
+      if (!userId) {
+        // Cannot resume an anonymous socket: preserve the old immediate
+        // teardown behavior for unauthenticated connections.
+        const room = roomService.getRoom(roomId);
+        if (!room) continue;
+        const otherUser = roomService.getOtherUser(roomId, socket.id);
+        if (otherUser) {
+          io.to(otherUser.socketId).emit("stranger_disconnected");
+        }
+        roomService.deleteRoom(roomId);
+        continue;
       }
-
-      roomService.deleteRoom(roomId);
+      socket.leave(roomId);
+      presenceService.markAway({
+        io,
+        roomService,
+        roomId,
+        userId,
+        socketId: socket.id,
+        sessionId: presenceService.sessionOf(socket),
+      });
     }
   });
 }

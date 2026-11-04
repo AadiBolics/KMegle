@@ -40,15 +40,61 @@ function getSocketUrl() {
 }
 
 const MAX_MESSAGE_LENGTH = 1000;
+
+// Modest resolution keeps bandwidth, TURN usage and NSFW
+// sampling cost reasonable on phones and campus Wi-Fi.
+const MEDIA_CONSTRAINTS: MediaStreamConstraints = {
+  video: {
+    width: { ideal: 640 },
+    height: { ideal: 480 },
+    frameRate: { ideal: 24, max: 30 },
+  },
+  audio: {
+    echoCancellation: true,
+    noiseSuppression: true,
+  },
+};
+
+// Maps a getUserMedia failure to a plain-language explanation.
+function mediaErrorStatus(error: unknown): string {
+  const errorName = error instanceof Error ? error.name : undefined;
+  const errorMessage = error instanceof Error ? error.message : undefined;
+  const isPermissionError =
+    errorName === "NotAllowedError" || errorName === "PermissionDeniedError";
+  const isNoDevice =
+    errorName === "NotFoundError" || errorName === "DevicesNotFoundError";
+  const isBusyDevice =
+    errorName === "NotReadableError" || errorName === "TrackStartError";
+
+  if (isPermissionError) {
+    return "Camera and microphone access is blocked. Allow it in your browser's site settings, then try again.";
+  }
+  if (isNoDevice) {
+    return "No camera or microphone found. Connect one and try again.";
+  }
+  if (isBusyDevice) {
+    return "Your camera or microphone is being used by another app. Close it and try again.";
+  }
+  return errorMessage || "Failed to start session. Please try again.";
+}
 // "disconnected" is often a brief network blip that recovers by itself, so
 // give the connection a moment before treating it as a lost partner.
 const DISCONNECT_GRACE_MS = 6000;
+// After a hard ICE failure or a mid-call reconnect, one ICE restart attempt
+// gets this long to recover before the call is declared lost.
+const ICE_RESTART_GRACE_MS = 8000;
+// On a mid-call reconnect, wait this long for the server's resume verdict
+// before falling back to a fresh search (also covers old servers that never
+// send one).
+const RESUME_FALLBACK_MS = 4000;
 
 export function useChatSession() {
   const { user, loading: authLoading } = useAuth();
 
   const [socket, setSocket] = useState<Socket | null>(null);
   const socketRef = useRef<Socket | null>(null);
+  // In-memory page ownership: survives transport reconnect, not a new tab or reload.
+  const sessionIdRef = useRef<string | null>(null);
 
   const [status, setStatus] = useState("Ready to connect.");
 
@@ -64,14 +110,27 @@ export function useChatSession() {
   const peerConnectionRef = useRef<RTCPeerConnection | null>(null);
   const pendingCandidates = useRef<RTCIceCandidateInit[]>([]);
   const dataChannelRef = useRef<RTCDataChannel | null>(null);
+  // Dedupes concurrent camera requests (entry preview + Start pressed while
+  // the permission prompt is still open must not open the camera twice).
+  const cameraPromiseRef = useRef<Promise<MediaStream> | null>(null);
   const connectionTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const disconnectTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const isInitiatorRef = useRef(false);
+  const resumeFallbackTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const iceRestartTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  // Reconnect banners rendered over live video (the status overlay only
+  // renders when there is no remote stream, so it can't cover these cases).
+  const [partnerAway, setPartnerAway] = useState(false);
+  const [selfReconnecting, setSelfReconnecting] = useState(false);
   const [chatInput, setChatInput] = useState("");
   const [isConnecting, setIsConnecting] = useState(false);
   const searchAttemptRef = useRef(0);
   const reportTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // True while WE are stopping tracks on purpose (cleanup/report/cancel) so
+  // track.onended doesn't mistake our own stop for a camera unplugging.
+  const intentionalStopRef = useRef(false);
   // True whenever `status` describes a failure rather than progress — lets the UI
   // suppress the "connecting" spinner on error states without parsing status text.
   const [isError, setIsError] = useState(false);
@@ -110,6 +169,15 @@ export function useChatSession() {
       disconnectTimerRef.current = null;
     }
 
+    if (iceRestartTimerRef.current) {
+      clearTimeout(iceRestartTimerRef.current);
+      iceRestartTimerRef.current = null;
+    }
+
+    isInitiatorRef.current = false;
+    setPartnerAway(false);
+    setSelfReconnecting(false);
+
     peerConnectionRef.current?.close();
     peerConnectionRef.current = null;
 
@@ -137,7 +205,66 @@ export function useChatSession() {
     [clearPeerConnection],
   );
 
-  const cleanupConnection = useCallback(() => {
+  // One ICE restart attempt, initiator side only: renegotiates with fresh
+  // candidates over the existing peer connection and room.
+  const restartIceOffer = useCallback(async () => {
+    const pc = peerConnectionRef.current;
+    const activeSocket = socketRef.current;
+    const activeRoomId = roomIdRef.current;
+    if (!pc || !activeSocket?.connected || !activeRoomId) return;
+    if (!isInitiatorRef.current) return;
+    if (pc.signalingState !== "stable") return;
+    try {
+      debugLog("🧊 Attempting ICE restart");
+      pc.restartIce();
+      const offer = await pc.createOffer({ iceRestart: true });
+      await pc.setLocalDescription(offer);
+      activeSocket.emit("webrtc_offer", {
+        offer: pc.localDescription,
+        roomId: activeRoomId,
+      });
+    } catch (error) {
+      debugLog("ICE restart offer failed:", error);
+    }
+  }, []);
+
+  // Hard ICE failure, or a blip that outlived the grace period: try one ICE
+  // restart (initiator offers, responder asks the initiator via the server)
+  // before declaring the call lost.
+  const attemptIceRecovery = useCallback(
+    (pc: RTCPeerConnection | null) => {
+      if (!pc || peerConnectionRef.current !== pc) return;
+      if (!socketRef.current?.connected) {
+        handleCallLost("Connection lost. Click Next for someone new.");
+        return;
+      }
+      setStatus("Connection unstable... trying to recover.");
+      if (isInitiatorRef.current) {
+        void restartIceOffer();
+      } else {
+        socketRef.current.emit("webrtc_restart_request", {
+          roomId: roomIdRef.current,
+        });
+      }
+      if (!iceRestartTimerRef.current) {
+        iceRestartTimerRef.current = setTimeout(() => {
+          iceRestartTimerRef.current = null;
+          if (
+            peerConnectionRef.current === pc &&
+            pc.connectionState !== "connected"
+          ) {
+            handleCallLost("Connection lost. Click Next for someone new.");
+          }
+        }, ICE_RESTART_GRACE_MS);
+      }
+    },
+    [handleCallLost, restartIceOffer],
+  );
+
+  // Tears down socket + peer connection but keeps the camera and its
+  // preview alive, so stopping a search (or a failed attempt) doesn't
+  // black out the user's own video.
+  const teardownCall = useCallback(() => {
     searchAttemptRef.current += 1;
     if (reportTimerRef.current) {
       clearTimeout(reportTimerRef.current);
@@ -158,15 +285,8 @@ export function useChatSession() {
 
     clearPeerConnection();
 
-    localStreamRef.current?.getTracks().forEach((track) => {
-      track.stop();
-    });
-
     setSocket(null);
     socketRef.current = null;
-
-    setLocalStream(null);
-    localStreamRef.current = null;
 
     setRemoteStream(null);
     remoteStreamRef.current = null;
@@ -176,6 +296,20 @@ export function useChatSession() {
 
     setMessages([]);
   }, [clearPeerConnection]);
+
+  // Full teardown — also turns the camera off. Used when leaving the chat
+  // entirely (unmount, settings, report) or when the account is banned.
+  const cleanupConnection = useCallback(() => {
+    teardownCall();
+
+    intentionalStopRef.current = true;
+    localStreamRef.current?.getTracks().forEach((track) => {
+      track.stop();
+    });
+
+    setLocalStream(null);
+    localStreamRef.current = null;
+  }, [teardownCall]);
 
   // ----------------------------------------
   // CONNECTION PHASE (derived)
@@ -379,6 +513,10 @@ export function useChatSession() {
             clearTimeout(disconnectTimerRef.current);
             disconnectTimerRef.current = null;
           }
+          if (iceRestartTimerRef.current) {
+            clearTimeout(iceRestartTimerRef.current);
+            iceRestartTimerRef.current = null;
+          }
         } else if (pc.connectionState === "disconnected") {
           setStatus("Connection unstable... trying to recover.");
           if (!disconnectTimerRef.current) {
@@ -388,14 +526,13 @@ export function useChatSession() {
                 peerConnectionRef.current === pc &&
                 pc.connectionState !== "connected"
               ) {
-                handleCallLost("Connection lost. Click Next for someone new.");
+                attemptIceRecovery(pc);
               }
             }, DISCONNECT_GRACE_MS);
           }
-        } else if (
-          pc.connectionState === "failed" ||
-          pc.connectionState === "closed"
-        ) {
+        } else if (pc.connectionState === "failed") {
+          attemptIceRecovery(pc);
+        } else if (pc.connectionState === "closed") {
           handleCallLost("Stranger disconnected. Click Next for someone new.");
         }
       };
@@ -404,16 +541,17 @@ export function useChatSession() {
         debugLog("🧊 WebRTC ICE State:", pc.iceConnectionState);
         if (!roomIdRef.current) return;
 
-        // Only a hard ICE failure is final. Transient "disconnected" is
-        // handled with a grace period in onconnectionstatechange above.
+        // Transient "disconnected" is handled with a grace period in
+        // onconnectionstatechange above. A hard failure gets one ICE
+        // restart attempt before the call is declared lost.
         if (pc.iceConnectionState === "failed") {
-          handleCallLost("Connection lost. Click Next for someone new.");
+          attemptIceRecovery(pc);
         }
       };
 
       return pc;
     },
-    [clearPeerConnection, handleCallLost],
+    [clearPeerConnection, handleCallLost, attemptIceRecovery],
   );
 
   // ----------------------------------------
@@ -465,6 +603,33 @@ export function useChatSession() {
         );
 
         setIsConnecting(false);
+
+        // Mid-call reconnect: the media path is peer-to-peer and may still
+        // be alive, and the server holds the room for a grace period. Hold
+        // the call and wait for the server's resume verdict instead of
+        // tearing everything down.
+        if (roomIdRef.current) {
+          setStatus("Reconnecting...");
+          if (resumeFallbackTimerRef.current) {
+            clearTimeout(resumeFallbackTimerRef.current);
+          }
+          resumeFallbackTimerRef.current = setTimeout(() => {
+            resumeFallbackTimerRef.current = null;
+            if (!roomIdRef.current) return;
+            clearPeerConnection();
+            setRemoteStream(null);
+            remoteStreamRef.current = null;
+            setRoomId(null);
+            roomIdRef.current = null;
+            setStatus("Finding someone for you...");
+            setMessages([
+              { sender: "system", text: "Waiting for a stranger..." },
+            ]);
+            newSocket.emit("find_match");
+          }, RESUME_FALLBACK_MS);
+          return;
+        }
+
         setIsError(false);
 
         // On an automatic reconnect the server has already dropped our old
@@ -476,7 +641,7 @@ export function useChatSession() {
         roomIdRef.current = null;
 
         setStatus(
-          "Connected! Entering waiting pool...",
+          "Finding someone for you...",
         );
 
         setMessages([
@@ -510,7 +675,7 @@ export function useChatSession() {
       newSocket.on("match_error", (data?: { message?: string }) => {
         setIsError(true);
         setStatus(data?.message || "Could not start searching. Please try again.");
-        cleanupConnection();
+        teardownCall();
       });
 
       newSocket.on("chat_rate_limited", () => {
@@ -524,13 +689,12 @@ export function useChatSession() {
       // on its own; tell the user instead of freezing on a dead call.
       newSocket.on("disconnect", (reason) => {
         if (reason === "io client disconnect") return;
-        clearPeerConnection();
-        setRemoteStream(null);
-        remoteStreamRef.current = null;
-        setRoomId(null);
-        roomIdRef.current = null;
+        // Signaling dropped. If we are mid-call, the media path is
+        // peer-to-peer and may still be alive — hold everything while
+        // socket.io reconnects; the resume verdict decides what survives.
         setIsError(true);
         setStatus("Connection to the server was lost. Reconnecting...");
+        if (roomIdRef.current) setSelfReconnecting(true);
       });
 
       // ------------------------------------
@@ -546,11 +710,12 @@ export function useChatSession() {
 
         setIsConnecting(false);
         setIsError(true);
-        setStatus(`Connection failed: ${error.message}`);
+        setStatus("Couldn't reach the server. Check your connection and try again.");
 
         // The socket never actually connected — tear it down so the UI
         // doesn't get stuck believing it's still "waiting" on a dead socket.
-        cleanupConnection();
+        // The camera preview stays on so retrying is instant.
+        teardownCall();
       });
 
       // ------------------------------------
@@ -578,7 +743,7 @@ export function useChatSession() {
             : "⏳ Temporarily on cooldown for content violations."
         );
         setIsConnecting(false);
-        cleanupConnection();
+        teardownCall();
       });
 
       // ------------------------------------
@@ -602,6 +767,7 @@ export function useChatSession() {
 
             setRoomId(data.roomId);
             roomIdRef.current = data.roomId;
+            isInitiatorRef.current = data.role === "initiator";
 
             pendingCandidates.current = [];
 
@@ -723,6 +889,81 @@ export function useChatSession() {
           }
         }
       );
+
+      // ------------------------------------
+      // SESSION RESUME (after a signaling blip mid-call)
+      // ------------------------------------
+
+      // Server's verdict after a mid-call reconnect.
+      newSocket.on(
+        "session_resume_result",
+        (data?: { resumed?: boolean; roomId?: string }) => {
+          if (resumeFallbackTimerRef.current) {
+            clearTimeout(resumeFallbackTimerRef.current);
+            resumeFallbackTimerRef.current = null;
+          }
+          if (!roomIdRef.current) return;
+
+          if (data?.resumed && data.roomId === roomIdRef.current) {
+            setIsError(false);
+            setSelfReconnecting(false);
+            const pc = peerConnectionRef.current;
+            if (pc && pc.connectionState === "connected") {
+              setStatus("Connected! Video active.");
+            } else {
+              // Signaling is back but media needs help: one ICE restart.
+              setStatus("Reconnecting video...");
+              attemptIceRecovery(pc);
+            }
+            return;
+          }
+
+          // Room is gone: fall back to a fresh search.
+          clearPeerConnection();
+          setRemoteStream(null);
+          remoteStreamRef.current = null;
+          setRoomId(null);
+          roomIdRef.current = null;
+          setIsError(false);
+          setStatus("Finding someone for you...");
+          setMessages([
+            { sender: "system", text: "Waiting for a stranger..." },
+          ]);
+          newSocket.emit("find_match");
+        },
+      );
+
+      // Partner's signaling dropped; their media may still be live and the
+      // server is holding the room for them.
+      newSocket.on(
+        "partner_connection_lost",
+        (data?: { message?: string }) => {
+          if (!roomIdRef.current) return;
+          setPartnerAway(true);
+          setStatus(
+            data?.message ||
+              "Stranger's connection dropped. Waiting for them to reconnect...",
+          );
+        },
+      );
+
+      newSocket.on("partner_reconnected", () => {
+        if (!roomIdRef.current) return;
+        setPartnerAway(false);
+        const pc = peerConnectionRef.current;
+        if (pc && pc.connectionState === "connected") {
+          setIsError(false);
+          setStatus("Connected! Video active.");
+        } else {
+          setStatus("Reconnecting video...");
+          attemptIceRecovery(pc);
+        }
+      });
+
+      // The responder asked us (the initiator) to drive an ICE restart.
+      newSocket.on("webrtc_restart_request", () => {
+        void restartIceOffer();
+      });
 
       // ------------------------------------
       // WEBRTC OFFER
@@ -918,13 +1159,84 @@ export function useChatSession() {
       );
     },
     [
+      attemptIceRecovery,
       cleanupConnection,
       clearPeerConnection,
       createPeerConnection,
       handleCallLost,
+      restartIceOffer,
       setupDataChannel,
+      teardownCall,
     ],
   );
+
+  // Best-effort instant room teardown on a deliberate tab close: at the
+  // transport level a real close looks exactly like a network blip, so
+  // without this the partner would wait out the whole away grace period.
+  useEffect(() => {
+    const onPageHide = () => {
+      const activeSocket = socketRef.current;
+      const activeRoomId = roomIdRef.current;
+      if (activeSocket?.connected && activeRoomId) {
+        activeSocket.emit("leave_room", { roomId: activeRoomId });
+      }
+    };
+    window.addEventListener("pagehide", onPageHide);
+    return () => window.removeEventListener("pagehide", onPageHide);
+  }, []);
+
+  // ----------------------------------------
+  // CAMERA ACQUISITION (shared)
+  // ----------------------------------------
+  // Single path for turning the camera on, used by the entry preview and by
+  // Start. Concurrent callers share one getUserMedia request; a teardown
+  // while the prompt is open cancels the handoff so the camera can't come
+  // back on after the session was torn down.
+  const acquireCamera = useCallback(async (): Promise<MediaStream> => {
+    if (localStreamRef.current) return localStreamRef.current;
+    if (cameraPromiseRef.current) return cameraPromiseRef.current;
+
+    const attemptAtAsk = searchAttemptRef.current;
+    // Share the POST-CHECK promise, not the raw getUserMedia promise: every
+    // awaiter must get the same outcome. Sharing the raw promise let a
+    // deduped caller keep a stream whose tracks the creator then stopped as
+    // stale, leaving calls with a dead outbound video (found by E2E probe).
+    const promise = (async () => {
+      const stream = await navigator.mediaDevices.getUserMedia(MEDIA_CONSTRAINTS);
+      if (
+        attemptAtAsk !== searchAttemptRef.current ||
+        localStreamRef.current
+      ) {
+        stream.getTracks().forEach((track) => track.stop());
+        if (localStreamRef.current) return localStreamRef.current;
+        throw new Error("Camera request was cancelled.");
+      }
+      localStreamRef.current = stream;
+      setLocalStream(stream);
+      intentionalStopRef.current = false;
+      // Camera unplugged / device lost mid-call: the local preview freezes
+      // silently without this, and the stranger just sees a stuck frame.
+      stream.getTracks().forEach((track) => {
+        track.onended = () => {
+          if (intentionalStopRef.current) return;
+          if (localStreamRef.current !== stream) return;
+          // Release every track and the socket too. Keeping the ended stream
+          // cached would make the next Start reuse a dead camera forever.
+          cleanupConnection();
+          setIsError(true);
+          setStatus("Your camera disconnected. Fix it and press Start again.");
+        };
+      });
+      return stream;
+    })();
+    cameraPromiseRef.current = promise;
+
+    try {
+      return await promise;
+    } finally {
+      cameraPromiseRef.current = null;
+    }
+  }, [cleanupConnection]);
 
   // ----------------------------------------
   // START SEARCH
@@ -935,9 +1247,7 @@ export function useChatSession() {
       // Firebase is still determining
       // authentication state.
       if (authLoading) {
-        setStatus(
-          "Checking authentication...",
-        );
+        setStatus("Signing you in...");
         return;
       }
 
@@ -970,51 +1280,44 @@ export function useChatSession() {
 
       const attempt = ++searchAttemptRef.current;
       setIsError(false);
-      setStatus("Requesting camera...");
+      setStatus("Turning on your camera...");
 
       setIsConnecting(true);
 
       // Clear the chat log for this fresh attempt — the video panel's status
-      // overlay already shows live progress ("Requesting camera...", "Fetching
-      // relay config...", etc.), so we don't need a system message here too.
+      // overlay already shows live progress ("Turning on your camera...",
+      // "Getting ready...", etc.), so we don't need a system message here too.
       setMessages([]);
 
       try {
         // ----------------------------------
         // CAMERA + MICROPHONE
         // ----------------------------------
-
-        const stream =
-          await navigator.mediaDevices.getUserMedia(
-            {
-              // Modest resolution keeps bandwidth, TURN usage and NSFW
-              // sampling cost reasonable on phones and campus Wi-Fi.
-              video: {
-                width: { ideal: 640 },
-                height: { ideal: 480 },
-                frameRate: { ideal: 24, max: 30 },
-              },
-              audio: {
-                echoCancellation: true,
-                noiseSuppression: true,
-              },
-            },
-          );
-
-        if (attempt !== searchAttemptRef.current) {
-          stream.getTracks().forEach((track) => track.stop());
-          return;
+        // The entry flow already turns the camera on for the preview, so
+        // this usually just reuses that stream; it only asks again when the
+        // preview isn't running (e.g. permission was denied earlier).
+        // If Start raced the entry preview's in-flight request, that request
+        // is cancelled by the attempt bump; retry once to get a live stream.
+        let stream: MediaStream;
+        try {
+          stream = await acquireCamera();
+        } catch (firstError) {
+          if (
+            firstError instanceof Error &&
+            firstError.message === "Camera request was cancelled."
+          ) {
+            stream = await acquireCamera();
+          } else {
+            throw firstError;
+          }
         }
-        setLocalStream(stream);
-        localStreamRef.current = stream;
+        if (attempt !== searchAttemptRef.current) return;
 
         // ----------------------------------
         // TURN
         // ----------------------------------
 
-        setStatus(
-          "Camera active. Fetching relay config...",
-        );
+        setStatus("Getting ready...");
 
         await prefetchIceConfig();
         if (attempt !== searchAttemptRef.current) return;
@@ -1031,6 +1334,8 @@ export function useChatSession() {
         // SOCKET.IO
         // ----------------------------------
 
+        sessionIdRef.current ??= crypto.randomUUID();
+        const sessionId = sessionIdRef.current;
         const newSocket = io(
           getSocketUrl(),
           {
@@ -1041,7 +1346,7 @@ export function useChatSession() {
             auth: (cb) => {
               user
                 .getIdToken()
-                .then((token) => cb({ token }))
+                .then((token) => cb({ token, sessionId }))
                 .catch(() => cb({ token: "" }));
             },
           },
@@ -1063,50 +1368,68 @@ export function useChatSession() {
 
         setIsConnecting(false);
         setIsError(true);
-        const errorName = error instanceof Error ? error.name : undefined;
-        const errorMessage = error instanceof Error ? error.message : undefined;
-        const isPermissionError =
-          errorName === "NotAllowedError" ||
-          errorName === "PermissionDeniedError";
+        setStatus(mediaErrorStatus(error));
 
-        const isNoDevice =
-          errorName === "NotFoundError" ||
-          errorName === "DevicesNotFoundError";
-        const isBusyDevice =
-          errorName === "NotReadableError" ||
-          errorName === "TrackStartError";
-
-        setStatus(
-          isPermissionError
-            ? "Camera and microphone access is blocked. Allow it in your browser's site settings, then try again."
-            : isNoDevice
-              ? "No camera or microphone found. Connect one and try again."
-              : isBusyDevice
-                ? "Your camera or microphone is being used by another app. Close it and try again."
-                : errorMessage || "Failed to start session. Please try again.",
-        );
-
-        // If camera was opened but the socket
-        // couldn't be created, clean up tracks.
-        if (localStreamRef.current) {
-          localStreamRef.current
-            .getTracks()
-            .forEach((track) => {
-              track.stop();
-            });
-
-          setLocalStream(null);
-          localStreamRef.current = null;
-        }
+        // A camera stream that was already running for the preview stays
+        // alive so the preview doesn't black out on a failed attempt.
+        // (A stream acquired inside this failed attempt was never stored.)
+        teardownCall();
       }
     },
     [
       authLoading,
+      acquireCamera,
       prefetchIceConfig,
       registerSocketHandlers,
+      teardownCall,
       user,
     ],
   );
+
+  // ----------------------------------------
+  // PREPARE CAMERA (entry preview)
+  // ----------------------------------------
+  // Turns the camera on as soon as someone lands on the chat page, before
+  // any matching starts, so they can see themselves first. Failure leaves a
+  // readable status; pressing Start retries the request.
+  // Turns the camera on as soon as someone lands on the chat page, before
+  // any matching starts, so they see themselves first. On failure a readable
+  // status explains the problem; pressing Start retries the request.
+  const prepareCamera = useCallback(async () => {
+    if (
+      typeof navigator === "undefined" ||
+      !navigator.mediaDevices?.getUserMedia
+    ) {
+      setIsError(true);
+      setStatus("This browser doesn't support camera access.");
+      return;
+    }
+    if (localStreamRef.current || cameraPromiseRef.current) return;
+
+    try {
+      await acquireCamera();
+    } catch (error) {
+      // A teardown racing the entry request (strict-mode remount in dev, or
+      // any stray cleanup) cancels the pending ask; retry once so the
+      // preview still comes up. prepareCamera only runs on entry, so this
+      // can't restart the camera after a deliberate Stop.
+      if (
+        error instanceof Error &&
+        error.message === "Camera request was cancelled."
+      ) {
+        try {
+          await acquireCamera();
+          return;
+        } catch (retryError) {
+          setIsError(true);
+          setStatus(mediaErrorStatus(retryError));
+          return;
+        }
+      }
+      setIsError(true);
+      setStatus(mediaErrorStatus(error));
+    }
+  }, [acquireCamera]);
 
   // ----------------------------------------
   // STOP SEARCH
@@ -1121,7 +1444,7 @@ export function useChatSession() {
     setIsError(false);
 
     setStatus(
-      "Disconnected. Ready to search.",
+      "Stopped. Camera off — press Start when you're ready.",
     );
   }, [cleanupConnection]);
 
@@ -1154,7 +1477,7 @@ export function useChatSession() {
     setIsError(false);
 
     setStatus(
-      "Skipped. Entering the waiting pool...",
+      "Finding someone new...",
     );
 
     // Identity is already attached
@@ -1225,6 +1548,7 @@ export function useChatSession() {
     roomIdRef.current = null;
     setRoomId(null);
     clearPeerConnection();
+    intentionalStopRef.current = true;
     localStreamRef.current?.getTracks().forEach((track) => track.stop());
     localStreamRef.current = null;
     setLocalStream(null);
@@ -1283,6 +1607,8 @@ export function useChatSession() {
     roomId,
     localStream,
     remoteStream,
+    partnerAway,
+    selfReconnecting,
     messages,
     chatInput,
     setChatInput,
@@ -1291,6 +1617,7 @@ export function useChatSession() {
     block,
     reportUser,
     sendMessage,
+    prepareCamera,
     cleanupConnection,
   };
 }

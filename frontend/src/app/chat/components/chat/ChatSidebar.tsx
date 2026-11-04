@@ -60,11 +60,11 @@ export default function ChatSidebar({
           }`}
         >
           <h2
-            className={`text-xs lg:text-sm font-bold tracking-wide uppercase ${
-              isDarkMode ? "text-gray-300" : "text-gray-700"
+            className={`font-display text-base lg:text-lg font-bold ${
+              isDarkMode ? "text-[#EDE4D6]" : "text-[#211B14]"
             }`}
           >
-            Live Chat
+            Live chat
           </h2>
 
           <span
@@ -181,17 +181,11 @@ export default function ChatSidebar({
             className="absolute right-1 w-8 h-8 lg:w-10 lg:h-10 flex items-center justify-center bg-[#C24A17] hover:bg-[#A93E13] rounded-full disabled:opacity-50 transition-all"
           >
             <svg
-              className="w-3 h-3 lg:w-4 lg:h-4 text-white ml-0.5"
-              fill="none"
-              stroke="currentColor"
+              className="w-3.5 h-3.5 lg:w-4 lg:h-4 text-white"
+              fill="currentColor"
               viewBox="0 0 24 24"
             >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2.5}
-                d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"
-              />
+              <path d="M3.4 20.4l17.45-7.48c.81-.35.81-1.49 0-1.84L3.4 3.6c-.66-.29-1.39.2-1.39.91L2 9.12c0 .5.37.93.87.99L17 12 2.87 13.88c-.5.07-.87.5-.87 1l.01 4.61c0 .72.73 1.2 1.39.91z" />
             </svg>
           </button>
         </div>

@@ -1,4 +1,6 @@
-function registerMatchSocket(socket, queue, dbService, roomService) {
+const presenceService = require("../services/presenceService");
+
+function registerMatchSocket(socket, queue, dbService, roomService, io) {
   // Guards against a client firing find_match repeatedly while the async
   // eligibility checks below are still in flight.
   let searchInFlight = false;
@@ -46,10 +48,15 @@ function registerMatchSocket(socket, queue, dbService, roomService) {
       // must end that room first, otherwise the old partner is left hanging
       // and the room leaks.
       for (const roomId of roomService.getRoomsForSocket(socket.id)) {
+        presenceService.clearRoom(roomId, roomService);
         socket.to(roomId).emit("stranger_disconnected");
         socket.leave(roomId);
         roomService.deleteRoom(roomId);
       }
+
+      // A fresh search also ends any room still held for this user after a
+      // brief disconnect, so the old partner is freed immediately.
+      presenceService.endAwayForUser({ io, roomService, userId, sessionId: presenceService.sessionOf(socket) });
 
       queue.add(socket, userId);
     } catch (err) {

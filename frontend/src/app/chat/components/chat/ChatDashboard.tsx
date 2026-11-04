@@ -23,6 +23,8 @@ export default function ChatDashboard() {
     roomId,
     localStream,
     remoteStream,
+    partnerAway,
+    selfReconnecting,
     messages,
     chatInput,
     setChatInput,
@@ -31,6 +33,7 @@ export default function ChatDashboard() {
     block,
     reportUser,
     sendMessage,
+    prepareCamera,
     cleanupConnection,
   } = useChatSession();
 
@@ -58,9 +61,9 @@ export default function ChatDashboard() {
   const [wantsSelfExpanded, setWantsSelfExpanded] = useState(false);
   const { isDarkMode, toggleDarkMode } = useTheme();
 
-  // Full-screen self view only makes sense during a call; it ends the
-  // moment the remote stream drops, and Escape leaves it too.
-  const isSelfExpanded = wantsSelfExpanded && !!remoteStream;
+  // Full-screen self view works both in a call and on the pre-match camera
+  // preview; it ends the moment the camera stream drops, and Escape leaves.
+  const isSelfExpanded = wantsSelfExpanded && !!localStream;
 
   useEffect(() => {
     if (!isSelfExpanded) return;
@@ -72,9 +75,10 @@ export default function ChatDashboard() {
   }, [isSelfExpanded]);
 
   useEffect(() => {
-    if (localVideoRef.current && localStream) {
-      localVideoRef.current.srcObject = localStream;
-    }
+    if (!localVideoRef.current) return;
+    // Explicitly clear on null: after a deliberate Stop/Report the element
+    // must not keep showing the last frozen camera frame.
+    localVideoRef.current.srcObject = localStream ?? null;
   }, [localStream]);
 
   useEffect(() => {
@@ -94,6 +98,14 @@ export default function ChatDashboard() {
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
+
+  // Turn the camera on for the preview as soon as the signed-in user lands
+  // here — before any matching starts.
+  useEffect(() => {
+    if (!authLoading && user) {
+      void prepareCamera();
+    }
+  }, [authLoading, user, prepareCamera]);
 
   // Redirect unauthenticated visitors instead of letting them sit on the
   // full chat UI with camera controls that silently refuse to do anything.
@@ -142,12 +154,15 @@ export default function ChatDashboard() {
       <VideoPanel
         remoteVideoRef={remoteVideoRef}
         localVideoRef={localVideoRef}
+        localStream={localStream}
         remoteStream={remoteStream}
         socketConnected={!!socket}
         isConnecting={isConnecting}
         connectionPhase={connectionPhase}
         isError={isError}
         status={status}
+        partnerAway={partnerAway}
+        selfReconnecting={selfReconnecting}
         isFullscreen={isFullscreen}
         isSelfExpanded={isSelfExpanded}
         isWarning={isWarning}

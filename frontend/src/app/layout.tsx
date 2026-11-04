@@ -76,6 +76,17 @@ export const metadata: Metadata = {
   alternates: {
     canonical: "https://kmegle.aadinadhan.me",
   },
+  // SVG for modern browsers, PNG fallbacks for Chrome Android / iOS Safari
+  // (which ignore SVG tab icons), plus the iOS home-screen touch icon.
+  icons: {
+    icon: [
+      { url: "/icon.svg", type: "image/svg+xml", sizes: "any" },
+      { url: "/icons/icon-32.png", sizes: "32x32", type: "image/png" },
+      { url: "/icons/icon-192.png", sizes: "192x192", type: "image/png" },
+      { url: "/icons/icon-512.png", sizes: "512x512", type: "image/png" },
+    ],
+    apple: [{ url: "/icons/apple-touch-icon.png", sizes: "180x180" }],
+  },
 };
 
 export default function RootLayout({
