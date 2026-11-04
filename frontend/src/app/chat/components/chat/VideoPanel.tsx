@@ -1,17 +1,27 @@
 "use client";
 
-import { RefObject } from "react";
+import {
+  PointerEvent as ReactPointerEvent,
+  RefObject,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import { ConnectionPhase } from "../../types/chat";
 
 interface VideoPanelProps {
   remoteVideoRef: RefObject<HTMLVideoElement | null>;
   localVideoRef: RefObject<HTMLVideoElement | null>;
+  localStream: MediaStream | null;
   remoteStream: MediaStream | null;
   socketConnected: boolean;
   isConnecting: boolean;
   connectionPhase: ConnectionPhase;
   isError: boolean;
   status: string;
+  partnerAway?: boolean;
+  selfReconnecting?: boolean;
   isFullscreen: boolean;
   isSelfExpanded: boolean;
   isWarning?: boolean;
@@ -27,15 +37,226 @@ interface VideoPanelProps {
   onToggleSelfExpand: () => void;
 }
 
+interface PipPosition {
+  x: number;
+  y: number;
+}
+
+interface DragState {
+  pointerId: number;
+  offsetX: number;
+  offsetY: number;
+}
+
+// Pointer-drag handling for a floating video tile. The tile keeps its default
+// corner placement until the first drag, after which it follows the pointer
+// and stays clamped inside the video stage.
+interface PipDragResult {
+  position: PipPosition | null;
+  dragHandlers: {
+    onPointerDown: (event: ReactPointerEvent<HTMLElement>) => void;
+    onPointerMove: (event: ReactPointerEvent<HTMLElement>) => void;
+    onPointerUp: (event: ReactPointerEvent<HTMLElement>) => void;
+    onPointerCancel: (event: ReactPointerEvent<HTMLElement>) => void;
+    onKeyDown: (event: React.KeyboardEvent<HTMLElement>) => void;
+    tabIndex: number;
+    role: string;
+    "aria-label": string;
+  };
+}
+
+const KEYBOARD_STEP = 24;
+
+function usePipDrag(
+  stageRef: RefObject<HTMLDivElement | null>,
+  tileRef: RefObject<HTMLVideoElement | null>,
+  ariaLabel: string,
+): PipDragResult {
+  const [position, setPosition] = useState<PipPosition | null>(null);
+  const hasCustomPosition = position !== null;
+  const dragStateRef = useRef<DragState | null>(null);
+
+  // Keep a dragged tile inside the stage when the viewport resizes or the
+  // device rotates: re-clamp, and fall back to the default corner if the
+  // stored position no longer fits.
+  useEffect(() => {
+    const stage = stageRef.current;
+    if (!stage || !hasCustomPosition) return;
+
+    const clamp = () => {
+      const tile = tileRef.current;
+      if (!tile) return;
+      const stageRect = stage.getBoundingClientRect();
+      const tileRect = tile.getBoundingClientRect();
+      if (
+        tileRect.width > stageRect.width - 8 ||
+        tileRect.height > stageRect.height - 8
+      ) {
+        setPosition(null);
+        return;
+      }
+      setPosition((current) =>
+        current
+          ? {
+              x: Math.max(
+                4,
+                Math.min(current.x, stageRect.width - tileRect.width - 4),
+              ),
+              y: Math.max(
+                4,
+                Math.min(current.y, stageRect.height - tileRect.height - 4),
+              ),
+            }
+          : current,
+      );
+    };
+
+    // ResizeObserver can fire mid-animation (the panel animates size), so
+    // also re-clamp shortly after window resize/orientation settles.
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const debouncedClamp = () => {
+      clearTimeout(timer);
+      timer = setTimeout(clamp, 250);
+    };
+
+    const observer = new ResizeObserver(debouncedClamp);
+    observer.observe(stage);
+    window.addEventListener("resize", debouncedClamp);
+    window.addEventListener("orientationchange", debouncedClamp);
+    return () => {
+      clearTimeout(timer);
+      observer.disconnect();
+      window.removeEventListener("resize", debouncedClamp);
+      window.removeEventListener("orientationchange", debouncedClamp);
+    };
+  }, [stageRef, tileRef, hasCustomPosition]);
+
+  const onPointerDown = useCallback(
+    (event: ReactPointerEvent<HTMLElement>) => {
+      // Only primary button / single touch; let inner buttons still work.
+      if (event.button !== 0) return;
+      const tile = event.currentTarget;
+      const rect = tile.getBoundingClientRect();
+      dragStateRef.current = {
+        pointerId: event.pointerId,
+        offsetX: event.clientX - rect.left,
+        offsetY: event.clientY - rect.top,
+      };
+      tile.setPointerCapture(event.pointerId);
+    },
+    [],
+  );
+
+  const onPointerMove = useCallback(
+    (event: ReactPointerEvent<HTMLElement>) => {
+      const drag = dragStateRef.current;
+      if (!drag || drag.pointerId !== event.pointerId) return;
+      const stage = stageRef.current;
+      const tile = event.currentTarget;
+      if (!stage) return;
+
+      const stageRect = stage.getBoundingClientRect();
+      const tileRect = tile.getBoundingClientRect();
+
+      const x = Math.max(
+        4,
+        Math.min(
+          event.clientX - stageRect.left - drag.offsetX,
+          stageRect.width - tileRect.width - 4,
+        ),
+      );
+      const y = Math.max(
+        4,
+        Math.min(
+          event.clientY - stageRect.top - drag.offsetY,
+          stageRect.height - tileRect.height - 4,
+        ),
+      );
+
+      setPosition({ x, y });
+    },
+    [stageRef],
+  );
+
+  const endDrag = useCallback((event: ReactPointerEvent<HTMLElement>) => {
+    if (dragStateRef.current?.pointerId !== event.pointerId) return;
+    dragStateRef.current = null;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+  }, []);
+
+  // Keyboard fallback: focus the tile and move it with the arrow keys.
+  const onKeyDown = useCallback(
+    (event: React.KeyboardEvent<HTMLElement>) => {
+      const stage = stageRef.current;
+      const tile = tileRef.current;
+      if (!stage || !tile) return;
+
+      const deltas: Record<string, [number, number]> = {
+        ArrowLeft: [-KEYBOARD_STEP, 0],
+        ArrowRight: [KEYBOARD_STEP, 0],
+        ArrowUp: [0, -KEYBOARD_STEP],
+        ArrowDown: [0, KEYBOARD_STEP],
+      };
+      const delta = deltas[event.key];
+      if (!delta) return;
+      event.preventDefault();
+
+      const stageRect = stage.getBoundingClientRect();
+      const tileRect = tile.getBoundingClientRect();
+      const base = position ?? {
+        x: tileRect.left - stageRect.left,
+        y: tileRect.top - stageRect.top,
+      };
+      setPosition({
+        x: Math.max(
+          4,
+          Math.min(base.x + delta[0], stageRect.width - tileRect.width - 4),
+        ),
+        y: Math.max(
+          4,
+          Math.min(base.y + delta[1], stageRect.height - tileRect.height - 4),
+        ),
+      });
+    },
+    [stageRef, tileRef, position],
+  );
+
+  return {
+    position,
+    dragHandlers: {
+      onPointerDown,
+      onPointerMove,
+      onPointerUp: endDrag,
+      onPointerCancel: endDrag,
+      onKeyDown,
+      tabIndex: 0,
+      role: "button",
+      "aria-label": ariaLabel,
+    },
+  };
+}
+
+// Inline style that anchors a dragged tile where the user left it. When the
+// tile hasn't been dragged yet, the default corner classes apply instead.
+function pipStyle(position: PipPosition | null): React.CSSProperties | undefined {
+  if (!position) return undefined;
+  return { left: position.x, top: position.y, right: "auto" };
+}
+
 export default function VideoPanel({
   remoteVideoRef,
   localVideoRef,
+  localStream,
   remoteStream,
   socketConnected,
   isConnecting,
   connectionPhase,
   isError,
   status,
+  partnerAway,
+  selfReconnecting,
   isFullscreen,
   isSelfExpanded,
   isWarning = false,
@@ -50,6 +271,18 @@ export default function VideoPanel({
   onToggleFullscreen,
   onToggleSelfExpand,
 }: VideoPanelProps) {
+  const stageRef = useRef<HTMLDivElement>(null);
+  const selfPip = usePipDrag(
+    stageRef,
+    localVideoRef,
+    "Your video preview - drag or use arrow keys to move it",
+  );
+  const remotePip = usePipDrag(
+    stageRef,
+    remoteVideoRef,
+    "Stranger video preview - drag or use arrow keys to move it",
+  );
+
   const handleBlock = () => {
     if (window.confirm("Block this user? You won't be matched with them again.")) {
       onBlock();
@@ -70,6 +303,7 @@ export default function VideoPanel({
 
   return (
     <div
+      ref={stageRef}
       className={`relative group flex-shrink-0 ${
         isFullscreen
           ? "fixed inset-0 z-[100] w-screen h-[100dvh]"
@@ -83,9 +317,11 @@ export default function VideoPanel({
         ref={remoteVideoRef}
         autoPlay
         playsInline
+        {...(isSelfExpanded && remoteStream ? remotePip.dragHandlers : {})}
+        style={isSelfExpanded && remoteStream ? pipStyle(remotePip.position) : undefined}
         className={`object-cover transition-all duration-300 ease-in-out ${
           isSelfExpanded && remoteStream
-            ? "absolute top-4 right-4 lg:top-6 lg:right-6 w-24 lg:w-40 aspect-[3/4] rounded-2xl shadow-2xl border border-white/20 z-[120] bg-black opacity-100"
+            ? "absolute top-4 right-4 lg:top-6 lg:right-6 w-24 lg:w-40 aspect-[3/4] rounded-2xl shadow-2xl border border-white/20 z-[120] bg-black opacity-100 cursor-move touch-none"
             : `absolute inset-0 w-full h-full ${
                 remoteStream ? "opacity-100 z-10" : "opacity-0 z-0"
               }`
@@ -98,22 +334,24 @@ export default function VideoPanel({
         autoPlay
         playsInline
         muted
+        {...(!isSelfExpanded && remoteStream ? selfPip.dragHandlers : {})}
+        style={!isSelfExpanded && remoteStream ? pipStyle(selfPip.position) : undefined}
         className={`object-cover transform scale-x-[-1] transition-all duration-500 ease-in-out ${
-          isSelfExpanded && remoteStream
+          isSelfExpanded
             ? "fixed inset-0 z-[110] w-screen h-screen supports-[height:100dvh]:h-[100dvh] bg-black"
             : remoteStream
-              ? "absolute top-16 right-4 lg:top-20 lg:right-6 w-24 lg:w-40 aspect-[3/4] rounded-2xl shadow-2xl border border-white/20 z-30 bg-black"
-              : `absolute inset-0 w-full h-full ${
-                  socketConnected
-                    ? "blur-2xl brightness-50 scale-110 z-0"
-                    : "brightness-75 z-0"
-                }`
+              ? "absolute top-16 right-4 lg:top-20 lg:right-6 w-24 lg:w-40 aspect-[3/4] rounded-2xl shadow-2xl border border-white/20 z-30 bg-black cursor-move touch-none"
+              : "absolute inset-0 w-full h-full brightness-[0.85] z-0"
         } ${isWarning ? "blur-[24px] brightness-75 ring-4 ring-amber-500/80" : ""}`}
       />
 
-      {/* Expand own video to full screen (sits over the self-view corner tile) */}
-      {remoteStream && !isSelfExpanded && (
-        <div className="absolute top-16 right-4 lg:top-20 lg:right-6 w-24 lg:w-40 aspect-[3/4] z-40 pointer-events-none">
+      {/* Expand own video to full screen (sits over the self-view corner tile,
+          or anywhere over the pre-match preview) */}
+      {localStream && !isSelfExpanded && (
+        <div
+          style={remoteStream ? pipStyle(selfPip.position) : undefined}
+          className="absolute top-16 right-4 lg:top-20 lg:right-6 w-24 lg:w-40 aspect-[3/4] z-40 pointer-events-none"
+        >
           <button
             onClick={onToggleSelfExpand}
             className="absolute left-1.5 bottom-1.5 pointer-events-auto bg-black/60 hover:bg-black/80 backdrop-blur-md border border-white/25 p-1.5 rounded-lg text-white transition-all"
@@ -128,7 +366,7 @@ export default function VideoPanel({
       )}
 
       {/* Back to the call layout when own video is full screen */}
-      {isSelfExpanded && remoteStream && (
+      {isSelfExpanded && (
         <button
           onClick={onToggleSelfExpand}
           className="fixed top-4 left-4 lg:top-6 lg:left-6 z-[130] bg-black/60 hover:bg-black/80 backdrop-blur-md border border-white/25 px-3.5 py-2 rounded-full text-white text-xs font-bold transition-all flex items-center gap-1.5"
@@ -184,7 +422,7 @@ export default function VideoPanel({
             {/* Icon */}
             <div className="mt-0.5 flex-shrink-0 w-7 h-7 rounded-lg bg-red-500/20 flex items-center justify-center">
               <svg className="w-4 h-4 text-red-300" viewBox="0 0 20 20" fill="currentColor">
-                <path fillRule="evenodd" d="M10 1a9 9 0 100 18A9 9 0 0010 1zm3.536 5.464a.75.75 0 010 1.06L11.06 10l2.476 2.476a.75.75 0 11-1.06 1.06L10 11.06l-2.476 2.476a.75.75 0 11-1.06-1.06L8.94 10 6.464 7.524a.75.75 0 011.06-1.06L10 8.94l2.476-2.476a.75.75 0 011.06 0z" clipRule="evenodd" />
+                <path fillRule="evenodd" d="M10 1a9 9 0 100 18A9 9 0 0010 1zm3.536 5.464a.75.75 0 010 1.06L11.06 10l2.476 2.476a.75.75 0 11-1.06 1.06L10 11.06l-2.476 2.476a.75.75 0 01-1.06 1.06L10 8.94l-2.476 2.476a.75.75 0 11-1.06 1.06L8.94 10 6.464 7.524a.75.75 0 011.06-1.06L10 8.94l2.476-2.476a.75.75 0 011.06 0z" clipRule="evenodd" />
               </svg>
             </div>
             {/* Text */}
@@ -229,8 +467,22 @@ export default function VideoPanel({
         </div>
       )}
 
+      {remoteStream && (partnerAway || selfReconnecting) && (
+        <div className="absolute top-14 lg:top-3 inset-x-0 flex justify-center z-30 pointer-events-none px-3">
+          <div
+            aria-live="polite"
+            className="bg-black/70 backdrop-blur-sm text-[#EDE4D6] text-xs lg:text-sm px-4 py-2 rounded-full border border-white/10 shadow-lg flex items-center justify-center gap-2 text-center max-w-full"
+          >
+            <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
+            {partnerAway
+              ? "Stranger's connection dropped. Waiting for them to reconnect..."
+              : "Reconnecting..."}
+          </div>
+        </div>
+      )}
+
       {!remoteStream && !isCooldownActive && (
-        <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none z-20 px-4 text-center">
+        <div className="absolute inset-x-0 top-1/2 -translate-y-1/2 flex flex-col items-center justify-center pointer-events-none z-20 px-4 text-center">
           {!isError &&
           (connectionPhase === "connecting" ||
             connectionPhase === "waiting" ||
@@ -239,7 +491,7 @@ export default function VideoPanel({
               <div className="w-12 h-12 lg:w-16 lg:h-16 border-4 border-[#C24A17]/30 border-t-[#C24A17] rounded-full animate-spin mb-4 lg:mb-6" />
               <p
                 aria-live="polite"
-                className="text-[#EDE4D6] font-medium tracking-wide animate-pulse text-xs lg:text-base"
+                className="text-[#EDE4D6] font-medium tracking-wide animate-pulse text-xs lg:text-base drop-shadow-md"
               >
                 {status}
               </p>
@@ -248,17 +500,26 @@ export default function VideoPanel({
             <p
               aria-live="polite"
               className={`font-medium tracking-wide text-sm lg:text-base drop-shadow-md ${
-                isError ? "text-red-300" : "text-gray-300"
+                isError ? "text-red-300" : "text-[#EDE4D6]/90"
               }`}
             >
-              {status || "Click Start to begin matching."}
+              {status ||
+                (localStream
+                  ? "You're on camera. Press Start to match with someone."
+                  : "Allow camera access to see your preview, then press Start.")}
             </p>
           )}
         </div>
       )}
 
-      {/* Action Controls */}
-      <div className={`absolute bottom-4 lg:bottom-6 left-1/2 -translate-x-1/2 flex flex-wrap justify-center items-center gap-2 lg:gap-3 p-2 rounded-2xl bg-black/70 backdrop-blur-xl border border-white/15 opacity-100 shadow-2xl w-max max-w-[calc(100%-1rem)] ${isSelfExpanded ? "z-[120]" : "z-40"}`}>
+      {/* Action Controls. In self-expanded mode the video fills the whole
+          viewport while this panel is still only 55dvh tall on mobile, so the
+          bar is pinned to the actual viewport bottom instead. */}
+      <div className={`${
+        isSelfExpanded
+          ? "fixed bottom-4 lg:bottom-6 z-[120]"
+          : "absolute bottom-4 lg:bottom-6 z-40"
+      } left-1/2 -translate-x-1/2 flex flex-wrap justify-center items-center gap-2 lg:gap-3 p-2 rounded-2xl bg-black/70 backdrop-blur-xl border border-white/15 opacity-100 shadow-2xl w-max max-w-[calc(100%-1rem)]`}>
         <button
           onClick={onToggleSearch}
           disabled={isCooldownActive}
