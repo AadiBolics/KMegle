@@ -53,6 +53,11 @@ export function ThemeProvider({
       "dark",
       isDarkMode
     );
+
+    // Keep the browser chrome color in sync with the active theme.
+    document
+      .querySelector('meta[name="theme-color"]')
+      ?.setAttribute("content", isDarkMode ? "#221C16" : "#F7F2EA");
   }, [isDarkMode, mounted]);
 
   const toggleDarkMode = () => {
