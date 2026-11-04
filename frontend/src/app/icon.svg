@@ -1,8 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
-  <rect width="64" height="64" rx="15" fill="#211B14"/>
-  <text x="15" y="43" font-family="Georgia, 'Times New Roman', serif" font-weight="700" font-size="36" fill="#F7F2EA">k</text>
-  <circle cx="37.5" cy="37.5" r="4.6" fill="#C24A17"/>
-  <rect x="44" y="44" width="4" height="8" rx="2" fill="#C24A17"/>
-  <rect x="50" y="40" width="4" height="12" rx="2" fill="#C24A17"/>
-  <rect x="56" y="36" width="4" height="16" rx="2" fill="#C24A17"/>
-</svg>
