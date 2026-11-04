@@ -1,6 +1,7 @@
 const MatchmakerQueue = require("../matchmaker/MatchmakerQueue");
 const dbService = require("../services/dbService");
 const roomService = require("../services/roomService");
+const presenceService = require("../services/presenceService");
 
 const registerMatchSocket = require("./matchSocket");
 const registerRoomSocket = require("./roomSocket");
@@ -19,7 +20,8 @@ function registerSockets(io) {
       socket,
       queue,
       dbService,
-      roomService
+      roomService,
+      io
     );
 
     registerRoomSocket(
@@ -36,6 +38,14 @@ function registerSockets(io) {
       socket,
       roomService
     );
+
+    // If this user was in a room held after a brief disconnect, re-attach
+    // them; otherwise say so explicitly so the client can fall back to a
+    // fresh search without waiting.
+    const hadAway = presenceService.resume({ io, roomService, socket });
+    if (!hadAway) {
+      socket.emit("session_resume_result", { resumed: false });
+    }
   });
 }
 
