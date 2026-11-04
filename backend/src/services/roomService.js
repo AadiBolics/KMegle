@@ -68,6 +68,21 @@ const roomService = {
     return rooms;
   },
 
+  // Re-attach a room member who reconnected with a new socket id.
+  updateSocketId(roomId, userId, newSocketId, oldSocketId) {
+    const room = activeRooms.get(roomId);
+    if (!room) return false;
+    if (room.u1.userId === userId && (!oldSocketId || room.u1.socketId === oldSocketId)) {
+      room.u1.socketId = newSocketId;
+      return true;
+    }
+    if (room.u2.userId === userId && (!oldSocketId || room.u2.socketId === oldSocketId)) {
+      room.u2.socketId = newSocketId;
+      return true;
+    }
+    return false;
+  },
+
   deleteRoom(roomId) {
     activeRooms.delete(roomId);
   },
