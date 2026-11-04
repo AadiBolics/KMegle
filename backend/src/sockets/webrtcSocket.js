@@ -76,6 +76,31 @@ function registerWebRTCSocket(socket, roomService) {
     }
   );
 
+  // The non-initiator cannot send offers, so on a hard ICE failure it asks
+  // the initiator (via the room) to perform the ICE restart renegotiation.
+  socket.on(
+    "webrtc_restart_request",
+    ({ roomId }) => {
+      if (!roomId) {
+        return;
+      }
+
+      const isMember =
+        roomService.isMember(
+          roomId,
+          socket.id
+        );
+
+      if (!isMember) {
+        return;
+      }
+
+      socket
+        .to(roomId)
+        .emit("webrtc_restart_request", {});
+    }
+  );
+
   socket.on(
     "webrtc_ice_candidate",
     ({ candidate, roomId }) => {
