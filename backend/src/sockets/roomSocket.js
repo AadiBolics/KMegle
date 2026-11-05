@@ -73,6 +73,12 @@ function registerRoomSocket(
     const userId = socket.user?.uid;
     if (!userId) return;
 
+    // Only an active room makes this a live-call report. Out-of-room reports
+    // (e.g. from a stale client) carry no peer exposure: recording a strike,
+    // forcing a cooldown or disconnecting the socket here would punish the
+    // user outside any call.
+    if (!roomId || !roomService.isMember(roomId, socket.id)) return;
+
     console.warn(`🚨 Client self-reported critical NSFW violation: ${userId}`);
     await dbService.recordViolation(userId, "local_nsfw_strike");
 
