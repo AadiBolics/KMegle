@@ -49,7 +49,7 @@ export default function ChatDashboard() {
   } = useNsfwModeration({
     localVideoRef,
     remoteVideoRef,
-    isActive: !!localStream,
+    isActive: !!localStream && !!roomId,
     socket,
     roomId,
     onCriticalViolation: () => {
