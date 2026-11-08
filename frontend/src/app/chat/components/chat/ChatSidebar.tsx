@@ -8,6 +8,8 @@ export default function ChatSidebar({
   onSendMessage,
   ready,
   onClose,
+  onRead,
+  onRemove,
 }: {
   messages: ChatMessage[];
   chatInput: string;
@@ -15,6 +17,8 @@ export default function ChatSidebar({
   onSendMessage: (e: FormEvent) => void;
   ready: boolean;
   onClose?: () => void;
+  onRead?: () => void;
+  onRemove?: () => void;
 }) {
   const log = useRef<HTMLDivElement>(null),
     nearBottom = useRef(true);
@@ -24,13 +28,24 @@ export default function ChatSidebar({
     if (el) el.scrollTop = el.scrollHeight;
     nearBottom.current = true;
     setUnread(false);
+    onRead?.();
   };
   useEffect(() => {
     const el = log.current;
     if (!el) return;
-    if (nearBottom.current) el.scrollTop = el.scrollHeight;
-    else if (messages.length) queueMicrotask(() => setUnread(true));
-  }, [messages]);
+    if (nearBottom.current) {
+      el.scrollTop = el.scrollHeight;
+      if (document.visibilityState === "visible") onRead?.();
+    } else if (messages.length) queueMicrotask(() => setUnread(true));
+  }, [messages, onRead]);
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState === "visible" && nearBottom.current)
+        onRead?.();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, [onRead]);
   return (
     <aside className="call-chat" aria-label="Conversation">
       <header>
@@ -42,15 +57,27 @@ export default function ChatSidebar({
               : "Text opens when your channel connects."}
           </p>
         </div>
-        {onClose && (
-          <button
-            className="quiet-button"
-            onClick={onClose}
-            aria-label="Close chat"
-          >
-            ✕
-          </button>
-        )}
+        <div className="chat-heading-actions">
+          {onRemove && (
+            <button
+              className="quiet-button"
+              onClick={onRemove}
+              aria-label="Remove chat bubble"
+              title="Remove chat bubble"
+            >
+              Dismiss
+            </button>
+          )}
+          {onClose && (
+            <button
+              className="quiet-button"
+              onClick={onClose}
+              aria-label={onRemove ? "Minimize chat" : "Close chat"}
+            >
+              ✕
+            </button>
+          )}
+        </div>
       </header>
       <div
         ref={log}
@@ -64,7 +91,10 @@ export default function ChatSidebar({
           if (el) {
             nearBottom.current =
               el.scrollHeight - el.scrollTop - el.clientHeight < 64;
-            if (nearBottom.current) setUnread(false);
+            if (nearBottom.current) {
+              setUnread(false);
+              if (document.visibilityState === "visible") onRead?.();
+            }
           }
         }}
       >

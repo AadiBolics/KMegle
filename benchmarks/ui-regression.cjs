@@ -198,6 +198,25 @@ const assert = require("node:assert/strict");
     // Exercise sender backpressure and bounded history via a real channel with normal paced messages.
     await a.getByRole("button", { name: "Fullscreen", exact: false }).click();
     await a.locator(".chat-drawer").waitFor();
+    for (const selector of [
+      ".chat-drawer",
+      ".chat-drawer .call-chat",
+      ".chat-drawer .message",
+    ]) {
+      assert.equal(
+        await a
+          .locator(selector)
+          .first()
+          .evaluate((el) => getComputedStyle(el).backgroundColor),
+        "rgba(0, 0, 0, 0)",
+      );
+    }
+    assert.equal(
+      await a
+        .locator(".chat-drawer")
+        .evaluate((el) => getComputedStyle(el).backdropFilter),
+      "none",
+    );
     const fullVideo = await a.locator(".video-stage").boundingBox();
     assert.ok(fullVideo.width >= 1438 && fullVideo.height >= 898);
     await a.getByRole("button", { name: "Hide chat" }).click();
@@ -337,6 +356,24 @@ const assert = require("node:assert/strict");
       [720, 450],
     ]) {
       await a.setViewportSize({ width, height });
+      await a.waitForFunction(() => {
+        const drawer = document
+          .querySelector(".chat-drawer")
+          ?.getBoundingClientRect();
+        const controls = document
+          .querySelector(".call-controls")
+          ?.getBoundingClientRect();
+        const composer = document
+          .querySelector(".message-composer")
+          ?.getBoundingClientRect();
+        return (
+          drawer &&
+          controls &&
+          composer &&
+          drawer.bottom <= controls.top &&
+          composer.bottom <= drawer.bottom + 1
+        );
+      });
       const video = await a.locator(".video-stage").boundingBox();
       const drawer = await a.locator(".chat-drawer").boundingBox();
       const controls = await a.locator(".call-controls").boundingBox();
@@ -354,6 +391,118 @@ const assert = require("node:assert/strict");
       });
     }
     await a.setViewportSize({ width: 390, height: 844 });
+    const bubble = a.getByRole("button", { name: "Chat bubble", exact: true });
+    await bubble.click();
+    assert.equal(await a.locator(".chat-drawer").count(), 0);
+    await b.locator("#chat-message").fill("Unread mobile message");
+    await b.getByRole("button", { name: "Send message" }).click();
+    await bubble.locator(".unread-badge").waitFor();
+    assert.equal(await bubble.locator(".unread-badge").innerText(), "1");
+    assert.equal(
+      await a
+        .getByRole("button", { name: "Show chat", exact: true })
+        .locator(".unread-badge")
+        .innerText(),
+      "1",
+    );
+    await a.screenshot({ path: path.join(out, "mobile-chat-unread.png") });
+    await bubble.click();
+    await a.getByText("Unread mobile message", { exact: true }).waitFor();
+    await a.waitForFunction(
+      () => document.querySelectorAll(".unread-badge").length === 0,
+    );
+    await a.locator("#chat-message").fill("Draft stays after minimizing");
+    await bubble.click();
+    await bubble.click();
+    assert.equal(
+      await a.locator("#chat-message").inputValue(),
+      "Draft stays after minimizing",
+    );
+    await a.locator("#chat-message").fill("");
+    await a.locator(".message-log").evaluate((el) => {
+      el.scrollTop = 0;
+      el.dispatchEvent(new Event("scroll"));
+    });
+    await b
+      .locator("#chat-message")
+      .fill("Unread while reading older messages");
+    await b.getByRole("button", { name: "Send message" }).click();
+    await bubble.locator(".unread-badge").waitFor();
+    await a.getByRole("button", { name: "New messages" }).click();
+    await a.waitForFunction(
+      () => document.querySelectorAll(".unread-badge").length === 0,
+    );
+    await bubble.click();
+    await b.locator("#chat-message").fill("Unread stays after removing bubble");
+    await b.getByRole("button", { name: "Send message" }).click();
+    await bubble.locator(".unread-badge").waitFor();
+    const head = await bubble.boundingBox();
+    await a.mouse.move(head.x + 28, head.y + 28);
+    await a.mouse.down();
+    await a.mouse.move(head.x + 16, head.y + 50, { steps: 3 });
+    const remove = a.getByRole("button", {
+      name: "Remove chat bubble",
+      exact: true,
+    });
+    await remove.waitFor();
+    const target = await remove.boundingBox();
+    await a.mouse.move(
+      target.x + target.width / 2,
+      target.y + target.height / 2,
+      { steps: 10 },
+    );
+    await a.screenshot({ path: path.join(out, "mobile-bubble-remove.png") });
+    await a.mouse.up();
+    assert.equal(await bubble.count(), 0);
+    assert.equal(await a.locator(".chat-drawer").count(), 0);
+    assert.equal(
+      await a
+        .getByRole("button", { name: "Show chat", exact: true })
+        .locator(".unread-badge")
+        .innerText(),
+      "1",
+    );
+    await a.getByRole("button", { name: "Show chat", exact: true }).click();
+    await bubble.waitFor();
+    await a
+      .getByText("Unread stays after removing bubble", { exact: true })
+      .waitFor();
+    await a.waitForFunction(
+      () => document.querySelectorAll(".unread-badge").length === 0,
+    );
+    await a.screenshot({ path: path.join(out, "transparent-mobile-chat.png") });
+    const touch = await context.newCDPSession(a);
+    await touch.send("Emulation.setTouchEmulationEnabled", {
+      enabled: true,
+      maxTouchPoints: 1,
+    });
+    const restoredHead = await bubble.boundingBox();
+    await touch.send("Input.dispatchTouchEvent", {
+      type: "touchStart",
+      touchPoints: [{ x: restoredHead.x + 28, y: restoredHead.y + 28 }],
+    });
+    await touch.send("Input.dispatchTouchEvent", {
+      type: "touchMove",
+      touchPoints: [{ x: 24, y: 220 }],
+    });
+    await a
+      .getByRole("button", { name: "Remove chat bubble", exact: true })
+      .waitFor();
+    await touch.send("Input.dispatchTouchEvent", {
+      type: "touchCancel",
+      touchPoints: [],
+    });
+    await bubble.waitFor();
+    assert.equal(await a.locator(".chat-remove-target").count(), 0);
+    await bubble.focus();
+    await a.keyboard.press("Enter");
+    await a.locator("#chat-message").waitFor();
+    await a.keyboard.press("Delete");
+    assert.equal(await bubble.count(), 0);
+    await a.getByRole("button", { name: "Show chat", exact: true }).click();
+    await bubble.waitFor();
+    await touch.detach();
+    await a.screenshot({ path: path.join(out, "mobile-chat-restored.png") });
     await a.keyboard.press("Escape");
     await a.getByRole("button", { name: "Safety", exact: true }).click();
     await a.getByRole("dialog").waitFor();
@@ -363,6 +512,11 @@ const assert = require("node:assert/strict");
     await a.getByRole("button", { name: "End", exact: true }).click();
     await a.getByRole("button", { name: "Find a student" }).click();
     await b.getByRole("button", { name: "Next student" }).click();
+    await a
+      .getByText("Connected to another student.", { exact: true })
+      .waitFor();
+    assert.equal(await bubble.count(), 0, "new calls reset the old bubble");
+    await a.getByRole("button", { name: "Show chat", exact: true }).click();
     await a.waitForFunction(
       () => !document.querySelector("#chat-message").disabled,
     );
@@ -398,6 +552,11 @@ const assert = require("node:assert/strict");
             "open data channel text",
             "mute track state",
             "focus drawer text",
+            "transparent fullscreen chat surfaces without backdrop blur",
+            "mobile bubble open/minimize and draft preservation",
+            "incoming-only unread badges on toolbar and bubble; reading clears them",
+            "drag to remove bubble preserves history and unread state; toolbar restores it",
+            "touch drag cancellation and keyboard bubble dismissal",
             "normal video uses 75% of desktop width and over 90% of height",
             "fullscreen video fills viewport; toggling chat never resizes it",
             "fullscreen drawer clears controls at desktop, mobile and short heights",

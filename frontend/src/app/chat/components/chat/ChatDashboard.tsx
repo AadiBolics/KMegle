@@ -1,5 +1,11 @@
 ﻿"use client";
-import { useEffect, useRef, useState, useCallback } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  useCallback,
+  useSyncExternalStore,
+} from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useAuth } from "../../../../context/authContext";
@@ -9,7 +15,14 @@ import { useNsfwModeration } from "../../hooks/useNsfwModeration";
 import Dialog from "./Dialog";
 import ChatSidebar from "./ChatSidebar";
 import CallIcon from "./CallIcon";
+import FloatingChat from "./FloatingChat";
 import "./call.css";
+function subscribeMobile(callback: () => void) {
+  const query = matchMedia("(max-width: 767px)");
+  query.addEventListener("change", callback);
+  return () => query.removeEventListener("change", callback);
+}
+const mobileSnapshot = () => matchMedia("(max-width: 767px)").matches;
 function Meter({ stream }: { stream: MediaStream | null }) {
   const ref = useRef<HTMLMeterElement>(null);
   useEffect(() => {
@@ -64,13 +77,63 @@ export default function ChatDashboard() {
       mode: "normal" | "remote" | "self";
       version: number;
     }>({ mode: "normal", version: 0 }),
-    [drawer, setDrawer] = useState(false),
+    [overlay, setOverlay] = useState({
+      version: 0,
+      open: false,
+      bubble: false,
+    }),
     [sheet, setSheet] = useState<"devices" | "safety" | "account" | null>(null),
     [reason, setReason] = useState("Inappropriate content"),
     [playbackBlocked, setPlaybackBlocked] = useState(false),
     [fit, setFit] = useState(false),
     [speakerError, setSpeakerError] = useState("");
   const viewVersion = session.viewVersion;
+  const mobile = useSyncExternalStore(
+    subscribeMobile,
+    mobileSnapshot,
+    () => false,
+  );
+  const drawer = overlay.version === viewVersion && overlay.open;
+  const bubble =
+    overlay.version === viewVersion && (overlay.bubble || overlay.open);
+  const setDrawer = useCallback(
+    (open: boolean) =>
+      setOverlay((previous) => ({
+        version: viewVersion,
+        open,
+        bubble:
+          mobile &&
+          (open ||
+            (previous.version === viewVersion &&
+              (previous.bubble || previous.open))),
+      })),
+    [mobile, viewVersion],
+  );
+  const removeBubble = () => {
+    setOverlay({ version: viewVersion, open: false, bubble: false });
+    chatToggle.current?.focus();
+  };
+  const incoming = session.messages.filter(
+    (message) => message.sender === "stranger",
+  );
+  const latestIncoming = incoming.at(-1)?.id;
+  const [read, setRead] = useState<{ version: number; id?: string }>({
+    version: 0,
+  });
+  const readIndex =
+    read.version === viewVersion
+      ? incoming.findIndex((message) => message.id === read.id)
+      : -1;
+  const unread = incoming.length - readIndex - 1;
+  const markRead = useCallback(
+    () =>
+      setRead((previous) =>
+        previous.version === viewVersion && previous.id === latestIncoming
+          ? previous
+          : { version: viewVersion, id: latestIncoming },
+      ),
+    [viewVersion, latestIncoming, setRead],
+  );
   const mode = view.version === viewVersion ? view.mode : "normal";
   const setMode = useCallback(
     (mode: "normal" | "remote" | "self") =>
@@ -133,7 +196,7 @@ export default function ChatDashboard() {
     };
     document.addEventListener("keydown", listener);
     return () => document.removeEventListener("keydown", listener);
-  }, [mode, setMode]);
+  }, [mode, setMode, setDrawer]);
   const active = session.connectionPhase !== "idle";
   const expanded = mode !== "normal" && !!session.localStream;
   const end = () => {
@@ -151,11 +214,17 @@ export default function ChatDashboard() {
       setChatInput={session.setChatInput}
       onSendMessage={session.sendMessage}
       ready={session.channelReady}
+      onRead={markRead}
+      onRemove={mobile ? removeBubble : undefined}
       onClose={
-        expanded
+        expanded || mobile
           ? () => {
               setDrawer(false);
-              chatToggle.current?.focus();
+              if (mobile)
+                document
+                  .querySelector<HTMLButtonElement>(".chat-head")
+                  ?.focus();
+              else chatToggle.current?.focus();
             }
           : undefined
       }
@@ -213,7 +282,7 @@ export default function ChatDashboard() {
         aria-label="Video conversation"
       >
         <div
-          className={`video-column ${expanded && drawer ? "with-chat" : ""}`}
+          className={`video-column ${(expanded && drawer) || (mobile && bubble) ? "with-chat" : ""}`}
         >
           <header className="stage-heading">
             <div>
@@ -385,8 +454,18 @@ export default function ChatDashboard() {
               </button>
             )}
           </div>
-          {expanded && drawer && (
-            <div className="chat-drawer">{conversation}</div>
+          {(expanded || mobile) && (
+            <FloatingChat
+              key={viewVersion}
+              mobile={mobile}
+              open={drawer}
+              visible={bubble}
+              unread={unread}
+              onOpenChange={setDrawer}
+              onRemove={removeBubble}
+            >
+              {conversation}
+            </FloatingChat>
           )}
           <div
             className={`connection-notice ${session.isError ? "error-notice" : ""}`}
@@ -456,15 +535,16 @@ export default function ChatDashboard() {
                 Find a student →
               </button>
             )}
-            {expanded && (
+            {(expanded || mobile) && (
               <button
                 className="control-button"
                 aria-expanded={drawer}
                 aria-label={drawer ? "Hide chat" : "Show chat"}
                 title={drawer ? "Hide chat" : "Show chat"}
+                aria-describedby="chat-unread"
                 ref={chatToggle}
                 onClick={() => {
-                  setDrawer((v) => !v);
+                  setDrawer(!drawer);
                   if (!drawer)
                     requestAnimationFrame(() =>
                       document
@@ -474,6 +554,11 @@ export default function ChatDashboard() {
                 }}
               >
                 <CallIcon name="chat" />
+                {unread > 0 && (
+                  <span className="unread-badge" aria-hidden="true">
+                    {unread > 99 ? "99+" : unread}
+                  </span>
+                )}
                 <span className="control-label">
                   {drawer ? "Hide chat" : "Show chat"}
                 </span>
@@ -529,6 +614,11 @@ export default function ChatDashboard() {
               <span className="control-label">Safety</span>
             </button>
           </div>
+          <span id="chat-unread" className="sr-only" role="status">
+            {unread > 0
+              ? `${unread} unread ${unread === 1 ? "message" : "messages"}`
+              : "No unread messages"}
+          </span>
           <footer className="call-notes">
             <span>
               {moderation.moderationStatus === "inactive"
@@ -546,7 +636,9 @@ export default function ChatDashboard() {
             </a>
           </footer>
         </div>
-        {!expanded && <div className="chat-slot">{conversation}</div>}
+        {!expanded && !mobile && (
+          <div className="chat-slot">{conversation}</div>
+        )}
       </section>
       {sheet === "devices" && (
         <Dialog title="Your devices" onClose={() => setSheet(null)}>
