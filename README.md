@@ -33,8 +33,9 @@ Use Node 24 (`.nvmrc`). Run `npm ci` separately in `backend`, `frontend` and
   are held in process memory.
 - Configure backend Firebase credentials, `DATABASE_URL`, `EMAIL_HASH_SECRET`,
   `TURN_API_KEY`, `METERED_APP_NAME` and any `ALLOWED_ADMIN_UIDS` outside Git.
-  College email is the default eligibility policy. Leave `TEST_ACCOUNT_EMAILS`
-  empty for the normal production student service.
+  Verified college and `@gmail.com` accounts are temporarily allowed for testing.
+  Set `ALLOW_GMAIL_TEST_ACCOUNTS=false` to restore college-only eligibility.
+  `TEST_ACCOUNT_EMAILS` remains an optional explicit list of additional test accounts.
 - Set `BACKEND_URL` at frontend **build time**. Compose uses the internal target
   `http://backend:5000`; `NEXT_PUBLIC_BACKEND_URL` is a separate browser-reachable
   URL for local direct access.

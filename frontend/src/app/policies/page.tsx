@@ -12,8 +12,9 @@ export default function PoliciesPage() {
         <h1>Community & privacy</h1>
         <p>
           Version 2026-11-08 · For adults studying at IIIT Kottayam. Verified
-          college sign-in is required. Explicitly configured test accounts may
-          be used for development and staging.
+          Google sign-in is required. Gmail access may be enabled temporarily
+          for testing. Explicitly configured test accounts may be used for
+          development and staging.
         </p>
         <h2>Look after each other.</h2>
         <p>

@@ -40,6 +40,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const login = async () => {
+    // Open directly from the click gesture, even when Firebase already has a user.
+    googleProvider.setCustomParameters({ prompt: "select_account" });
     await signInWithPopup(auth, googleProvider);
   };
 

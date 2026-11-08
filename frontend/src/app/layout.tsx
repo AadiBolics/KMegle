@@ -16,7 +16,7 @@ export const metadata: Metadata = {
   metadataBase: new URL("https://kmegle.aadinadhan.me"),
   title: "KMegle | A little more campus.",
   description:
-    "Meet fellow adult IIIT Kottayam students through video and text. Verified college sign-in required.",
+    "Meet fellow adult IIIT Kottayam students through video and text. Verified Google sign-in required.",
   alternates: { canonical: "/" },
   openGraph: {
     type: "website",
@@ -60,7 +60,7 @@ export default function RootLayout({
               name: "KMegle",
               url: "https://kmegle.aadinadhan.me",
               description:
-                "Video and text for adult IIIT Kottayam students. Verified college sign-in required.",
+                "Video and text for adult IIIT Kottayam students. Verified Google sign-in required.",
               applicationCategory: "SocialNetworkingApplication",
               operatingSystem: "Web",
               offers: {

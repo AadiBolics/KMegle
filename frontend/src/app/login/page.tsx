@@ -66,7 +66,9 @@ export default function LoginPage() {
   return (
     <main
       className={`flex min-h-screen items-center justify-center p-4 transition-colors duration-300 ${
-        isDarkMode ? "bg-[#221C16] text-[#F7F2EA]" : "bg-[#F7F2EA] text-[#211B14]"
+        isDarkMode
+          ? "bg-[#221C16] text-[#F7F2EA]"
+          : "bg-[#F7F2EA] text-[#211B14]"
       }`}
     >
       <div
@@ -85,7 +87,7 @@ export default function LoginPage() {
             isDarkMode ? "text-gray-400" : "text-gray-600"
           }`}
         >
-          Random video chat exclusively for IIIT Kottayam.
+          Video chat for the campus community.
         </p>
 
         <button
@@ -112,7 +114,7 @@ export default function LoginPage() {
             isDarkMode ? "text-gray-500" : "text-gray-500"
           }`}
         >
-          Only @iiitkottayam.ac.in accounts are allowed.
+          Use your verified Google account. Access is checked before connecting.
         </p>
       </div>
     </main>

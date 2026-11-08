@@ -186,8 +186,8 @@ export default function LandingPage() {
           </p>
 
           <p className="text-[#4A4238] dark:text-[#C9BCAB] text-sm mb-6">
-            Video chat for adult IIIT Kottayam students. Verified college
-            sign-in required; camera check comes next.
+            Video chat for adult IIIT Kottayam students. Verified Google sign-in
+            required; camera check comes next.
           </p>
         </div>
 

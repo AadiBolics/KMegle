@@ -22,15 +22,15 @@ async function httpFirebaseAuth(req, res, next) {
     console.error("❌ HTTP Firebase authentication failed:", error.message);
 
     if (error instanceof AuthError) {
-      const status =
-        error.message === "Email must be verified"
-          ? 403
-          : error.message === "Only IIIT Kottayam accounts are allowed"
-            ? 403
-            : 401;
+      const status = ["EMAIL_NOT_VERIFIED", "ACCOUNT_NOT_ALLOWED"].includes(
+        error.code,
+      )
+        ? 403
+        : 401;
 
       return res.status(status).json({
         error: error.message,
+        code: error.code,
       });
     }
 
