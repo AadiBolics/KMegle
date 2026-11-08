@@ -37,7 +37,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     document.documentElement.classList.toggle("dark", isDarkMode);
     document
       .querySelector('meta[name="theme-color"]')
-      ?.setAttribute("content", isDarkMode ? "#221C16" : "#F7F2EA");
+      ?.setAttribute("content", isDarkMode ? "#0a0a0f" : "#f8fafc");
   }, [isDarkMode]);
   const toggleDarkMode = () => {
     try {

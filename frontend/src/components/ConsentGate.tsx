@@ -183,7 +183,7 @@ function Agreement({ children }: { children: ReactNode }) {
     <main className="call-app consent-page">
       <section className="account-card">
         <Link href="/" className="campus-brand">
-          kmegle.
+          KMegle.
         </Link>
         <h1>Before your first hello.</h1>
         <p>

@@ -49,14 +49,14 @@ export default function LoginPage() {
     return (
       <main
         className={`flex min-h-screen items-center justify-center transition-colors duration-300 ${
-          isDarkMode ? "bg-[#221C16]" : "bg-[#F7F2EA]"
+          isDarkMode ? "bg-[#0A0A0F]" : "bg-[#F8FAFC]"
         }`}
       >
         <div
           className={`w-8 h-8 border-4 rounded-full animate-spin ${
             isDarkMode
-              ? "border-[#C24A17]/30 border-t-[#C24A17]"
-              : "border-[#C24A17]/30 border-t-[#C24A17]"
+              ? "border-[#4F46E5]/30 border-t-[#4F46E5]"
+              : "border-[#4F46E5]/30 border-t-[#4F46E5]"
           }`}
         />
       </main>
@@ -67,19 +67,19 @@ export default function LoginPage() {
     <main
       className={`flex min-h-screen items-center justify-center p-4 transition-colors duration-300 ${
         isDarkMode
-          ? "bg-[#221C16] text-[#F7F2EA]"
-          : "bg-[#F7F2EA] text-[#211B14]"
+          ? "bg-[#0A0A0F] text-[#F8FAFC]"
+          : "bg-[#F8FAFC] text-[#111827]"
       }`}
     >
       <div
         className={`w-full max-w-md rounded-3xl border p-8 shadow-2xl transition-colors duration-300 ${
           isDarkMode
-            ? "bg-[#1B1611] border-[#3A3128]"
-            : "bg-[#FFFDF9] border-[#E5DCD0]"
+            ? "bg-[#13141A] border-[#2B2E3A]"
+            : "bg-[#FFFFFF] border-[#E2E8F0]"
         }`}
       >
         <h1 className="font-display text-3xl font-bold tracking-tight">
-          kmegle<span className="text-[#C24A17]">.</span>
+          KMegle<span className="text-[#4F46E5]">.</span>
         </h1>
 
         <p
@@ -93,11 +93,11 @@ export default function LoginPage() {
         <button
           onClick={handleLogin}
           disabled={loggingIn}
-          className="mt-8 w-full flex items-center justify-center gap-3 rounded-xl bg-[#C24A17] hover:bg-[#A93E13] px-4 py-3.5 font-bold text-[#FFFDF9] transition-all active:scale-95 disabled:opacity-60 disabled:cursor-not-allowed"
+          className="mt-8 w-full flex items-center justify-center gap-3 rounded-xl bg-[#4F46E5] hover:bg-[#4338CA] px-4 py-3.5 font-bold text-[#FFFFFF] transition-all active:scale-95 disabled:opacity-60 disabled:cursor-not-allowed"
         >
           {loggingIn ? (
             <>
-              <div className="w-4 h-4 border-2 border-[#E9A583] border-t-white rounded-full animate-spin" />
+              <div className="w-4 h-4 border-2 border-[#A5B4FC] border-t-white rounded-full animate-spin" />
               Opening Google...
             </>
           ) : (

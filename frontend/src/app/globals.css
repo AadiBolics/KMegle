@@ -1,20 +1,25 @@
 @import "tailwindcss";
-
 @custom-variant dark (&:where(.dark, .dark *));
-
 html,
 body {
-  background-color: #f7f2ea;
+  background-color: #f8fafc;
 }
-
 html.dark,
 html.dark body {
-  background-color: #221c16;
+  background-color: #0a0a0f;
 }
-
-/* Keep legacy public-page accent text readable on the paper dark surfaces. */
-.dark .text-\[\#C24A17\] {
-  color: #edaa83;
+.font-display {
+  font-family: inherit;
+  font-weight: 800;
+  letter-spacing: -0.035em;
+}
+.dark .text-\[\#4F46E5\] {
+  color: #a5b4fc;
+}
+.entry-page {
+  background-image:
+    radial-gradient(ellipse at 15% 10%, #6366f11f, transparent 55%),
+    radial-gradient(ellipse at 85% 90%, #a855f714, transparent 55%);
 }
 @media (prefers-reduced-motion: reduce) {
   *,
@@ -24,22 +29,18 @@ html.dark body {
     scroll-behavior: auto !important;
     transition: none !important;
   }
+  .fade-up,
+  .fade-up-delay,
+  .fade-up-delay-2,
+  .fade-up-delay-3 {
+    opacity: 1 !important;
+    transform: none !important;
+  }
 }
-
-/* Paper direction: serif display face for the wordmark and headings. */
-.font-display {
-  font-family: var(--font-fraunces), Georgia, "Times New Roman", serif;
-  font-optical-sizing: auto;
-  letter-spacing: -0.01em;
-}
-
-/* Hides the scrollbar while keeping the element scrollable — used by the
-   chat message list so it matches the rest of the glass/dark UI chrome. */
 .scrollbar-hide {
   -ms-overflow-style: none;
   scrollbar-width: none;
 }
-
 .scrollbar-hide::-webkit-scrollbar {
   display: none;
 }

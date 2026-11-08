@@ -8,6 +8,7 @@ import { useChatSession } from "../../hooks/useChatSession";
 import { useNsfwModeration } from "../../hooks/useNsfwModeration";
 import Dialog from "./Dialog";
 import ChatSidebar from "./ChatSidebar";
+import CallIcon from "./CallIcon";
 import "./call.css";
 function Meter({ stream }: { stream: MediaStream | null }) {
   const ref = useRef<HTMLMeterElement>(null);
@@ -143,6 +144,23 @@ export default function ChatDashboard() {
     );
     exitMode();
   };
+  const conversation = (
+    <ChatSidebar
+      messages={session.messages}
+      chatInput={session.chatInput}
+      setChatInput={session.setChatInput}
+      onSendMessage={session.sendMessage}
+      ready={session.channelReady}
+      onClose={
+        expanded
+          ? () => {
+              setDrawer(false);
+              chatToggle.current?.focus();
+            }
+          : undefined
+      }
+    />
+  );
   if (loading || !user)
     return (
       <main className="call-app loading-screen" aria-busy="true">
@@ -150,56 +168,53 @@ export default function ChatDashboard() {
       </main>
     );
   return (
-    <main className={`call-app ${expanded ? "focus-mode" : ""}`}>
-      <header className="campus-header">
-        <Link
-          href="/"
-          className="campus-brand"
-          onClick={(e) => {
-            if (active) {
-              e.preventDefault();
-              setSheet("account");
-            }
-          }}
-        >
-          kmegle<span>.</span>
-        </Link>
-        <span className="brand-caption">A little more campus.</span>
-        <nav aria-label="Call settings">
-          <button className="quiet-button" onClick={() => setSheet("devices")}>
-            Devices
-          </button>
-          <button
-            className="quiet-button"
-            onClick={toggleDarkMode}
-            aria-label={`Use ${isDarkMode ? "light" : "dark"} theme`}
+    <main className={`call-app chat-app ${expanded ? "focus-mode" : ""}`}>
+      {!expanded && (
+        <header className="campus-header">
+          <Link
+            href="/"
+            className="campus-brand"
+            onClick={(e) => {
+              if (active) {
+                e.preventDefault();
+                setSheet("account");
+              }
+            }}
           >
-            {isDarkMode ? "Light" : "Dark"}
-          </button>
-          <button className="quiet-button" onClick={() => setSheet("account")}>
-            Account
-          </button>
-        </nav>
-      </header>
-      <div className="call-intro">
-        <div>
-          <p className="eyebrow">YOUR CAMPUS. A NEW CONVERSATION.</p>
-          <h1>
-            {active
-              ? "Make a little connection."
-              : "Good conversations start here."}
-          </h1>
-        </div>
-        <p>
-          One student at a time.
-          <br />A familiar place. A fresh hello.
-        </p>
-      </div>
+            KMegle<span>.</span>
+          </Link>
+          <span className="brand-caption">Campus video chat</span>
+          <nav aria-label="Call settings">
+            <button
+              className="quiet-button"
+              onClick={() => setSheet("devices")}
+            >
+              Devices
+            </button>
+            <button
+              className="quiet-button"
+              onClick={toggleDarkMode}
+              aria-label={`Use ${isDarkMode ? "light" : "dark"} theme`}
+            >
+              {isDarkMode ? "Light" : "Dark"}
+            </button>
+            <button
+              className="quiet-button"
+              onClick={() => setSheet("account")}
+            >
+              Account
+            </button>
+          </nav>
+        </header>
+      )}
+      <h1 className="sr-only">Campus video chat</h1>
       <section
         className={`call-shell ${expanded ? "expanded" : ""}`}
         aria-label="Video conversation"
       >
-        <div className="video-column">
+        <div
+          className={`video-column ${expanded && drawer ? "with-chat" : ""}`}
+        >
           <header className="stage-heading">
             <div>
               <span
@@ -218,22 +233,43 @@ export default function ChatDashboard() {
                         : "Local preview"}
               </span>
             </div>
-            <button
-              ref={expandRef}
-              className="quiet-button"
-              disabled={!session.localStream}
-              onClick={(event) => {
-                if (expanded) exitMode();
-                else {
-                  modeOpener.current = event.currentTarget;
-                  setMode("remote");
-                }
-              }}
-            >
-              {expanded ? "Exit focus ↙" : "Focus ↗"}
-            </button>
+            <div className="stage-actions">
+              {expanded && (
+                <button
+                  className="quiet-button"
+                  onClick={() => setSheet("devices")}
+                >
+                  Devices
+                </button>
+              )}
+              {session.remoteStream && (
+                <button
+                  className="quiet-button"
+                  onClick={() => setFit((v) => !v)}
+                >
+                  {fit ? "Fill video" : "Fit video"}
+                </button>
+              )}
+              <button
+                ref={expandRef}
+                className="quiet-button"
+                disabled={!session.localStream}
+                onClick={(event) => {
+                  if (expanded) exitMode();
+                  else {
+                    modeOpener.current = event.currentTarget;
+                    setMode("remote");
+                    setDrawer(true);
+                  }
+                }}
+              >
+                {expanded ? "Exit fullscreen ↙" : "Fullscreen ↗"}
+              </button>
+            </div>
           </header>
-          <div className={`video-stage ${fit ? "fit-video" : ""}`}>
+          <div
+            className={`video-stage ${fit ? "fit-video" : ""} ${session.localStream && !active ? "preview-stage" : ""}`}
+          >
             <video
               ref={remoteVideoRef}
               autoPlay
@@ -252,7 +288,7 @@ export default function ChatDashboard() {
                     <div className="campus-monogram" aria-hidden="true">
                       k.
                     </div>
-                    <h2>Your next hello is waiting.</h2>
+                    <h2>Ready to meet someone?</h2>
                     <p>
                       Check your camera and microphone first.
                       <br />
@@ -324,18 +360,13 @@ export default function ChatDashboard() {
                   onClick={(event) => {
                     modeOpener.current = event.currentTarget;
                     setMode(mode === "self" ? "normal" : "self");
-                    setDrawer(false);
+                    setDrawer(mode !== "self");
                   }}
                 >
                   ↗
                 </button>
               </div>
             </div>
-            {session.remoteStream && (
-              <button className="fit-button" onClick={() => setFit((v) => !v)}>
-                {fit ? "Fill video" : "Fit video"}
-              </button>
-            )}
             {playbackBlocked && (
               <button
                 className="playback-button primary-button"
@@ -354,6 +385,9 @@ export default function ChatDashboard() {
               </button>
             )}
           </div>
+          {expanded && drawer && (
+            <div className="chat-drawer">{conversation}</div>
+          )}
           <div
             className={`connection-notice ${session.isError ? "error-notice" : ""}`}
             role="status"
@@ -372,19 +406,29 @@ export default function ChatDashboard() {
           <div className="call-controls" aria-label="Call controls">
             <button
               className="control-button"
+              aria-label={session.audioEnabled ? "Mute mic" : "Unmute mic"}
+              title={session.audioEnabled ? "Mute mic" : "Unmute mic"}
               disabled={!session.localStream}
               aria-pressed={!session.audioEnabled}
               onClick={() => session.toggleTrack("audio")}
             >
-              {session.audioEnabled ? "Mute mic" : "Unmute mic"}
+              <CallIcon name="mic" off={!session.audioEnabled} />
+              <span className="control-label">
+                {session.audioEnabled ? "Mute mic" : "Unmute mic"}
+              </span>
             </button>
             <button
               className="control-button"
+              aria-label={session.videoEnabled ? "Camera off" : "Camera on"}
+              title={session.videoEnabled ? "Camera off" : "Camera on"}
               disabled={!session.localStream}
               aria-pressed={!session.videoEnabled}
               onClick={() => session.toggleTrack("video")}
             >
-              {session.videoEnabled ? "Camera off" : "Camera on"}
+              <CallIcon name="camera" off={!session.videoEnabled} />
+              <span className="control-label">
+                {session.videoEnabled ? "Camera off" : "Camera on"}
+              </span>
             </button>
             {active ? (
               <button
@@ -416,14 +460,41 @@ export default function ChatDashboard() {
               <button
                 className="control-button"
                 aria-expanded={drawer}
+                aria-label={drawer ? "Hide chat" : "Show chat"}
+                title={drawer ? "Hide chat" : "Show chat"}
                 ref={chatToggle}
-                onClick={() => setDrawer((v) => !v)}
+                onClick={() => {
+                  setDrawer((v) => !v);
+                  if (!drawer)
+                    requestAnimationFrame(() =>
+                      document
+                        .getElementById("chat-message")
+                        ?.focus({ preventScroll: true }),
+                    );
+                }}
               >
-                {drawer ? "Hide chat" : "Show chat"}
+                <CallIcon name="chat" />
+                <span className="control-label">
+                  {drawer ? "Hide chat" : "Show chat"}
+                </span>
               </button>
             )}
             <button
               className="control-button end-button"
+              aria-label={
+                session.safetyPending || session.safetyRetry
+                  ? "Close request"
+                  : active
+                    ? "End"
+                    : "Turn devices off"
+              }
+              title={
+                session.safetyPending || session.safetyRetry
+                  ? "Close request"
+                  : active
+                    ? "End"
+                    : "Turn devices off"
+              }
               disabled={
                 !active &&
                 !session.localStream &&
@@ -434,14 +505,19 @@ export default function ChatDashboard() {
               }
               onClick={end}
             >
-              {session.safetyPending || session.safetyRetry
-                ? "Close request"
-                : active
-                  ? "End"
-                  : "Turn devices off"}
+              <CallIcon name="end" />
+              <span className="control-label">
+                {session.safetyPending || session.safetyRetry
+                  ? "Close request"
+                  : active
+                    ? "End"
+                    : "Turn devices off"}
+              </span>
             </button>
             <button
               className="control-button"
+              aria-label="Safety"
+              title="Safety"
               disabled={
                 !session.hasSafetyTarget ||
                 !session.signalingReady ||
@@ -449,7 +525,8 @@ export default function ChatDashboard() {
               }
               onClick={() => setSheet("safety")}
             >
-              Safety
+              <CallIcon name="safety" />
+              <span className="control-label">Safety</span>
             </button>
           </div>
           <footer className="call-notes">
@@ -469,25 +546,7 @@ export default function ChatDashboard() {
             </a>
           </footer>
         </div>
-        {(!expanded || drawer) && (
-          <div className={expanded ? "chat-drawer" : "chat-slot"}>
-            <ChatSidebar
-              messages={session.messages}
-              chatInput={session.chatInput}
-              setChatInput={session.setChatInput}
-              onSendMessage={session.sendMessage}
-              ready={session.channelReady}
-              onClose={
-                expanded
-                  ? () => {
-                      setDrawer(false);
-                      chatToggle.current?.focus();
-                    }
-                  : undefined
-              }
-            />
-          </div>
-        )}
+        {!expanded && <div className="chat-slot">{conversation}</div>}
       </section>
       {sheet === "devices" && (
         <Dialog title="Your devices" onClose={() => setSheet(null)}>

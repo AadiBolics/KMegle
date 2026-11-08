@@ -1,11 +1,10 @@
 ﻿import type { Metadata } from "next";
 import { AuthProvider } from "../context/authContext";
 import { ThemeProvider } from "../context/themeContext";
-import { Inter, Fraunces } from "next/font/google";
+import { Inter } from "next/font/google";
 import "./globals.css";
 
 const inter = Inter({ subsets: ["latin"] });
-const fraunces = Fraunces({ subsets: ["latin"], variable: "--font-fraunces" });
 export const viewport = {
   width: "device-width",
   initialScale: 1,
@@ -50,7 +49,7 @@ export default function RootLayout({
               "try{var t=localStorage.getItem('kmegle_theme');document.documentElement.classList.toggle('dark',t==='dark'||(t!=='light'&&matchMedia('(prefers-color-scheme: dark)').matches));}catch(e){}",
           }}
         />
-        <meta name="theme-color" content="#f7f2ea" />
+        <meta name="theme-color" content="#0a0a0f" />
         <script
           type="application/ld+json"
           dangerouslySetInnerHTML={{
@@ -72,7 +71,7 @@ export default function RootLayout({
           }}
         />
       </head>
-      <body className={`${inter.className} ${fraunces.variable}`}>
+      <body className={inter.className}>
         <AuthProvider>
           <ThemeProvider>{children}</ThemeProvider>
         </AuthProvider>

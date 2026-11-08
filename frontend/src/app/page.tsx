@@ -123,14 +123,14 @@ export default function LandingPage() {
 
   if (authLoading) {
     return (
-      <main className="min-h-screen bg-[#F7F2EA] dark:bg-[#221C16] flex items-center justify-center">
-        <div className="text-[#6B6156] dark:text-[#9C9081]">Loading...</div>
+      <main className="min-h-screen entry-page bg-[#F8FAFC] dark:bg-[#0A0A0F] flex items-center justify-center">
+        <div className="text-[#64748B] dark:text-[#9CA3AF]">Loading...</div>
       </main>
     );
   }
 
   return (
-    <div className="min-h-screen bg-[#F7F2EA] dark:bg-[#221C16] flex items-center justify-center p-4 relative overflow-hidden font-sans">
+    <div className="min-h-screen entry-page bg-[#F8FAFC] dark:bg-[#0A0A0F] flex items-center justify-center p-4 relative overflow-hidden">
       <style>{`
         @keyframes float {
           0%, 100% {
@@ -174,18 +174,18 @@ export default function LandingPage() {
         }
       `}</style>
 
-      <div className="bg-[#FFFDF9] dark:bg-[#1B1611] border border-[#E5DCD0] dark:border-[#3A3128] rounded-3xl shadow-[0_2px_28px_rgba(33,27,20,0.08)] dark:shadow-[0_2px_28px_rgba(0,0,0,0.5)] max-w-md w-full p-6 sm:p-10 text-center z-10">
+      <div className="bg-[#FFFFFF] dark:bg-[#13141A] border border-[#E2E8F0] dark:border-[#2B2E3A] rounded-3xl shadow-[0_2px_28px_rgba(33,27,20,0.08)] dark:shadow-[0_2px_28px_rgba(0,0,0,0.5)] max-w-md w-full p-6 sm:p-10 text-center z-10">
         {/* Logo */}
         <div className="fade-up">
-          <h1 className="font-display text-6xl font-bold text-[#211B14] dark:text-[#F7F2EA] tracking-tight mb-2">
-            kmegle<span className="text-[#C24A17]">.</span>
+          <h1 className="font-display text-6xl font-black text-[#111827] dark:text-[#F8FAFC] tracking-tight mb-2">
+            KMegle<span className="text-[#4F46E5]">.</span>
           </h1>
 
-          <p className="text-[#6B6156] dark:text-[#9C9081] text-xs tracking-widest mb-2 uppercase font-semibold">
+          <p className="text-[#64748B] dark:text-[#9CA3AF] text-xs tracking-widest mb-2 uppercase font-semibold">
             Random Video Chat
           </p>
 
-          <p className="text-[#4A4238] dark:text-[#C9BCAB] text-sm mb-6">
+          <p className="text-[#475569] dark:text-[#CBD5E1] text-sm mb-6">
             Video chat for adult IIIT Kottayam students. Verified Google sign-in
             required; camera check comes next.
           </p>
@@ -201,9 +201,9 @@ export default function LandingPage() {
           ].map((feat) => (
             <span
               key={feat}
-              className="text-xs bg-[#FFFDF9] dark:bg-[#1B1611] border border-[#DDD2C2] dark:border-[#3A3128] text-[#4A4238] dark:text-[#C9BCAB] px-3 py-1 rounded-full font-medium"
+              className="text-xs bg-[#FFFFFF] dark:bg-[#13141A] border border-[#CBD5E1] dark:border-[#2B2E3A] text-[#475569] dark:text-[#CBD5E1] px-3 py-1 rounded-full font-medium"
             >
-              <span className="text-[#C24A17]">✓</span> {feat}
+              <span className="text-[#4F46E5]">✓</span> {feat}
             </span>
           ))}
         </div>
@@ -214,11 +214,11 @@ export default function LandingPage() {
             id="start-chat-btn"
             onClick={handleInitialStart}
             disabled={isLoading}
-            className="w-full flex items-center justify-center gap-3 bg-[#211B14] hover:bg-[#3A3128] text-[#F7F2EA] rounded-xl px-6 py-4 font-bold text-base transition-all disabled:opacity-70 active:scale-95"
+            className="w-full flex items-center justify-center gap-3 bg-[#4F46E5] hover:bg-[#4338CA] text-white rounded-xl px-6 py-4 font-bold text-base transition-all disabled:opacity-70 active:scale-95"
           >
             {isLoading ? (
               <div className="flex items-center gap-3">
-                <div className="w-5 h-5 border-2 border-[#8A7B6B] border-t-[#F7F2EA] rounded-full animate-spin" />
+                <div className="w-5 h-5 border-2 border-[#A5B4FC] border-t-[#F8FAFC] rounded-full animate-spin" />
                 Signing in...
               </div>
             ) : (
@@ -245,12 +245,12 @@ export default function LandingPage() {
 
         {error && <p className="mt-4 text-sm text-red-600">{error}</p>}
 
-        <div className="fade-up-delay-3 mt-5 text-sm text-[#4A4238] dark:text-[#C9BCAB] leading-relaxed">
+        <div className="fade-up-delay-3 mt-5 text-sm text-[#475569] dark:text-[#CBD5E1] leading-relaxed">
           Review the{" "}
           <button
             type="button"
             onClick={() => setShowTermsModal(true)}
-            className="underline underline-offset-4 min-h-11 px-1 text-[#C24A17] hover:text-[#A93E13] focus-visible:outline-2 focus-visible:outline-offset-2"
+            className="underline underline-offset-4 min-h-11 px-1 text-[#4F46E5] hover:text-[#4338CA] focus-visible:outline-2 focus-visible:outline-offset-2"
           >
             Safety &amp; Terms
           </button>{" "}
@@ -259,25 +259,25 @@ export default function LandingPage() {
         <p className="mt-2 text-sm">
           <a
             href="/policies"
-            className="inline-flex min-h-11 items-center px-2 underline underline-offset-4 text-[#C24A17]"
+            className="inline-flex min-h-11 items-center px-2 underline underline-offset-4 text-[#4F46E5]"
           >
             Terms &amp; Privacy
           </a>
         </p>
-        <p className="mt-3 text-sm text-[#4A4238] dark:text-[#C9BCAB]">
+        <p className="mt-3 text-sm text-[#475569] dark:text-[#CBD5E1]">
           Need help?{" "}
           <a
             href="mailto:aadinadhan17@gmail.com"
-            className="inline-flex min-h-11 items-center underline underline-offset-4 text-[#C24A17] break-all"
+            className="inline-flex min-h-11 items-center underline underline-offset-4 text-[#4F46E5] break-all"
           >
             Contact support
           </a>
         </p>
-        <div className="mt-6 pt-6 border-t border-[#E5DCD0] dark:border-[#3A3128] text-left">
-          <h2 className="font-display text-lg font-semibold text-[#211B14] dark:text-[#F7F2EA] mb-3">
+        <div className="mt-6 pt-6 border-t border-[#E2E8F0] dark:border-[#2B2E3A] text-left">
+          <h2 className="font-display text-lg font-semibold text-[#111827] dark:text-[#F8FAFC] mb-3">
             Before you connect
           </h2>
-          <ol className="space-y-2 text-sm text-[#4A4238] dark:text-[#C9BCAB] leading-relaxed list-decimal pl-5">
+          <ol className="space-y-2 text-sm text-[#475569] dark:text-[#CBD5E1] leading-relaxed list-decimal pl-5">
             <li>Review the safety rules and sign in with Google.</li>
             <li>
               Allow camera and microphone access — your preview appears before
@@ -285,7 +285,7 @@ export default function LandingPage() {
             </li>
             <li>Use Stop to leave, or Block and Report for unsafe behavior.</li>
           </ol>
-          <p className="mt-4 text-sm text-[#4A4238] dark:text-[#C9BCAB] leading-relaxed">
+          <p className="mt-4 text-sm text-[#475569] dark:text-[#CBD5E1] leading-relaxed">
             Video quality depends on your device and connection. Another
             participant can record their screen. Do not share private
             information.
@@ -295,7 +295,7 @@ export default function LandingPage() {
 
       {/* TERMS MODAL */}
       {showTermsModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-[#211B14]/60 backdrop-blur-sm">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-[#111827]/60 backdrop-blur-sm">
           <div
             ref={dialogRef}
             role="dialog"
@@ -303,28 +303,28 @@ export default function LandingPage() {
             aria-labelledby="safety-title"
             aria-describedby="safety-description"
             tabIndex={-1}
-            className="bg-[#FFFDF9] dark:bg-[#1B1611] border border-[#E5DCD0] dark:border-[#3A3128] rounded-2xl max-w-lg w-full max-h-[calc(100dvh-1.5rem)] flex flex-col overflow-hidden shadow-2xl focus:outline-none"
+            className="bg-[#FFFFFF] dark:bg-[#13141A] border border-[#E2E8F0] dark:border-[#2B2E3A] rounded-2xl max-w-lg w-full max-h-[calc(100dvh-1.5rem)] flex flex-col overflow-hidden shadow-2xl focus:outline-none"
           >
             <div className="overflow-y-auto min-h-0 p-5 sm:p-8 pb-2 sm:pb-3">
               <h2
                 id="safety-title"
-                className="font-display text-2xl font-bold text-[#211B14] dark:text-[#F7F2EA] mb-2"
+                className="font-display text-2xl font-bold text-[#111827] dark:text-[#F8FAFC] mb-2"
               >
                 Safety & Terms
               </h2>
 
               <p
                 id="safety-description"
-                className="text-[#4A4238] dark:text-[#C9BCAB] text-sm mb-5"
+                className="text-[#475569] dark:text-[#CBD5E1] text-sm mb-5"
               >
                 You must agree to these rules before using KMegle.
               </p>
 
               <details className="mb-5 text-left">
-                <summary className="cursor-pointer min-h-11 py-3 text-sm font-semibold text-[#C24A17]">
+                <summary className="cursor-pointer min-h-11 py-3 text-sm font-semibold text-[#4F46E5]">
                   Before you connect: data notice
                 </summary>
-                <div className="space-y-4 text-sm leading-relaxed text-[#4A4238] dark:text-[#C9BCAB]">
+                <div className="space-y-4 text-sm leading-relaxed text-[#475569] dark:text-[#CBD5E1]">
                   <p>
                     KMegle uses Google sign-in through Firebase Authentication.
                     The service receives your account ID and email. Its database
@@ -355,14 +355,14 @@ export default function LandingPage() {
                   href="/policies"
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="inline-flex min-h-11 items-center underline text-[#C24A17]"
+                  className="inline-flex min-h-11 items-center underline text-[#4F46E5]"
                 >
                   Read Terms &amp; Privacy
                 </a>
               </details>
-              <div className="space-y-4 text-sm text-[#4A4238] dark:text-[#C9BCAB] mb-4 bg-[#F7F2EA] dark:bg-[#221C16] p-4 rounded-xl border border-[#E5DCD0] dark:border-[#3A3128]">
+              <div className="space-y-4 text-sm text-[#475569] dark:text-[#CBD5E1] mb-4 bg-[#F8FAFC] dark:bg-[#0A0A0F] p-4 rounded-xl border border-[#E2E8F0] dark:border-[#2B2E3A]">
                 <div className="flex gap-3">
-                  <span className="text-[#C24A17] font-bold">1.</span>
+                  <span className="text-[#4F46E5] font-bold">1.</span>
                   <p>
                     <strong>
                       You must be at least 18 years old (or the legal age of
@@ -373,7 +373,7 @@ export default function LandingPage() {
                 </div>
 
                 <div className="flex gap-3">
-                  <span className="text-[#C24A17] font-bold">2.</span>
+                  <span className="text-[#4F46E5] font-bold">2.</span>
                   <p>
                     <strong>No nudity, sexual content, or harassment.</strong>{" "}
                     Violations may result in account suspension.
@@ -381,7 +381,7 @@ export default function LandingPage() {
                 </div>
 
                 <div className="flex gap-3">
-                  <span className="text-[#C24A17] font-bold">3.</span>
+                  <span className="text-[#4F46E5] font-bold">3.</span>
                   <p>
                     <strong>Report bad behavior.</strong> Use the Block & Report
                     functionality when necessary.
@@ -389,7 +389,7 @@ export default function LandingPage() {
                 </div>
 
                 <div className="flex gap-3">
-                  <span className="text-[#C24A17] font-bold">4.</span>
+                  <span className="text-[#4F46E5] font-bold">4.</span>
                   <p>
                     Video connects directly where possible, with a relay when
                     needed. We do not record or store your video, but connection
@@ -398,10 +398,10 @@ export default function LandingPage() {
                 </div>
               </div>
             </div>
-            <div className="flex flex-col-reverse sm:flex-row gap-2 p-4 sm:px-8 border-t border-[#E5DCD0] dark:border-[#3A3128] shrink-0 bg-[#FFFDF9] dark:bg-[#1B1611]">
+            <div className="flex flex-col-reverse sm:flex-row gap-2 p-4 sm:px-8 border-t border-[#E2E8F0] dark:border-[#2B2E3A] shrink-0 bg-[#FFFFFF] dark:bg-[#13141A]">
               <button
                 onClick={() => setShowTermsModal(false)}
-                className="w-full sm:w-auto px-6 py-3 rounded-xl font-bold text-[#6B6156] dark:text-[#9C9081] hover:bg-[#F7F2EA] dark:hover:bg-[#2A231C] hover:text-[#211B14] dark:hover:text-[#F7F2EA] transition-colors"
+                className="w-full sm:w-auto px-6 py-3 rounded-xl font-bold text-[#64748B] dark:text-[#9CA3AF] hover:bg-[#F8FAFC] dark:hover:bg-[#1E2028] hover:text-[#111827] dark:hover:text-[#F8FAFC] transition-colors"
               >
                 Cancel
               </button>
@@ -409,7 +409,7 @@ export default function LandingPage() {
               <button
                 onClick={handleAgreeAndStart}
                 disabled={isLoading}
-                className="w-full flex-1 px-6 py-3 bg-[#211B14] hover:bg-[#3A3128] text-[#F7F2EA] rounded-xl font-bold shadow-lg transition-all active:scale-95 disabled:opacity-50"
+                className="w-full flex-1 px-6 py-3 bg-[#4F46E5] hover:bg-[#4338CA] text-white rounded-xl font-bold shadow-lg transition-all active:scale-95 disabled:opacity-50"
               >
                 {isLoading
                   ? "Signing in..."

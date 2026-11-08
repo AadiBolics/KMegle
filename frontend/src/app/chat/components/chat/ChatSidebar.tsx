@@ -35,7 +35,7 @@ export default function ChatSidebar({
     <aside className="call-chat" aria-label="Conversation">
       <header>
         <div>
-          <h2>Say hello.</h2>
+          <h2>Text chat</h2>
           <p>
             {ready
               ? "Text goes directly to this student."

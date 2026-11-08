@@ -181,15 +181,43 @@ const assert = require("node:assert/strict");
     await a.locator("#chat-message").fill("Hello campus");
     await a.getByRole("button", { name: "Send message" }).click();
     await b.getByText("Hello campus", { exact: true }).waitFor();
+    const normalVideo = await a.locator(".video-stage").boundingBox();
+    assert.ok(Math.abs(normalVideo.width / 1440 - 0.75) < 0.02);
+    assert.ok(normalVideo.height / 900 > 0.9);
+    await a.screenshot({ path: path.join(out, "normal-video-desktop.png") });
+    await a.getByRole("button", { name: "Account", exact: true }).click();
+    await a.getByRole("dialog", { name: "Account settings" }).waitFor();
+    await a.getByRole("button", { name: "Stay here" }).click();
+    assert.equal(await a.locator("#chat-message").isEnabled(), true);
+    assert.equal(
+      await a
+        .getByRole("link", { name: "Community & privacy" })
+        .getAttribute("href"),
+      "/policies",
+    );
     // Exercise sender backpressure and bounded history via a real channel with normal paced messages.
-    await a.getByRole("button", { name: "Focus", exact: false }).click();
+    await a.getByRole("button", { name: "Fullscreen", exact: false }).click();
+    await a.locator(".chat-drawer").waitFor();
+    const fullVideo = await a.locator(".video-stage").boundingBox();
+    assert.ok(fullVideo.width >= 1438 && fullVideo.height >= 898);
+    await a.getByRole("button", { name: "Hide chat" }).click();
     await a.getByRole("button", { name: "Show chat" }).click();
+    assert.deepEqual(await a.locator(".video-stage").boundingBox(), fullVideo);
+    const drawerBounds = await a.locator(".chat-drawer").boundingBox();
+    const controlsBounds = await a.locator(".call-controls").boundingBox();
+    assert.ok(drawerBounds.y + drawerBounds.height <= controlsBounds.y);
     await a.locator("#chat-message").fill("Focus chat works");
     await a.getByRole("button", { name: "Send message" }).click();
     await b.getByText("Focus chat works", { exact: true }).waitFor();
     await a.screenshot({ path: path.join(out, "focus-chat-desktop.png") });
+    await a.getByRole("button", { name: "Devices", exact: true }).click();
+    await a.getByRole("dialog").waitFor();
     await a.keyboard.press("Escape");
-    await a.getByRole("button", { name: "Focus", exact: false }).waitFor();
+    await a
+      .getByRole("button", { name: "Exit fullscreen", exact: false })
+      .waitFor();
+    await a.keyboard.press("Escape");
+    await a.getByRole("button", { name: "Fullscreen", exact: false }).waitFor();
     const first = [...io.sockets.sockets.values()][0];
     first.conn.close();
     await new Promise((r) => setTimeout(r, 2500));
@@ -278,6 +306,7 @@ const assert = require("node:assert/strict");
     await a
       .getByRole("button", { name: "Expand self preview", exact: true })
       .click();
+    await a.getByRole("button", { name: "Hide chat" }).click();
     await a.getByRole("button", { name: "Show chat" }).click();
     await a.locator("#chat-message").fill("Self view chat works");
     await a.getByRole("button", { name: "Send message" }).click();
@@ -298,15 +327,39 @@ const assert = require("node:assert/strict");
       true,
     );
     await a.setViewportSize({ width: 390, height: 844 });
-    await a.getByRole("button", { name: "Focus", exact: false }).click();
+    await a.getByRole("button", { name: "Fullscreen", exact: false }).click();
+    await a.getByRole("button", { name: "Hide chat" }).click();
     await a.getByRole("button", { name: "Show chat" }).click();
     await a.screenshot({ path: path.join(out, "focus-chat-mobile.png") });
+    for (const [width, height] of [
+      [390, 844],
+      [320, 700],
+      [720, 450],
+    ]) {
+      await a.setViewportSize({ width, height });
+      const video = await a.locator(".video-stage").boundingBox();
+      const drawer = await a.locator(".chat-drawer").boundingBox();
+      const controls = await a.locator(".call-controls").boundingBox();
+      assert.ok(video.width >= width - 2 && video.height >= height - 2);
+      assert.ok(drawer.y + drawer.height <= controls.y);
+      assert.ok(drawer.y >= 0 && drawer.x >= 0);
+      assert.ok(controls.y + controls.height <= height);
+      assert.ok(await a.locator("#chat-message").isVisible());
+      if (height >= 650) {
+        const preview = await a.locator(".self-preview").boundingBox();
+        assert.ok(preview.y + preview.height <= drawer.y);
+      }
+      await a.screenshot({
+        path: path.join(out, `fullscreen-${width}-${height}.png`),
+      });
+    }
+    await a.setViewportSize({ width: 390, height: 844 });
     await a.keyboard.press("Escape");
     await a.getByRole("button", { name: "Safety", exact: true }).click();
     await a.getByRole("dialog").waitFor();
     await a.keyboard.press("Escape");
     assert.equal(await a.getByRole("dialog").count(), 0);
-    await a.getByRole("button", { name: "Focus", exact: false }).click();
+    await a.getByRole("button", { name: "Fullscreen", exact: false }).click();
     await a.getByRole("button", { name: "End", exact: true }).click();
     await a.getByRole("button", { name: "Find a student" }).click();
     await b.getByRole("button", { name: "Next student" }).click();
@@ -314,7 +367,9 @@ const assert = require("node:assert/strict");
       () => !document.querySelector("#chat-message").disabled,
     );
     assert.equal(
-      await a.getByRole("button", { name: "Exit focus", exact: false }).count(),
+      await a
+        .getByRole("button", { name: "Exit fullscreen", exact: false })
+        .count(),
       0,
       "a new call cannot inherit an ended focus mode",
     );
@@ -343,6 +398,10 @@ const assert = require("node:assert/strict");
             "open data channel text",
             "mute track state",
             "focus drawer text",
+            "normal video uses 75% of desktop width and over 90% of height",
+            "fullscreen video fills viewport; toggling chat never resizes it",
+            "fullscreen drawer clears controls at desktop, mobile and short heights",
+            "device dialog works in fullscreen and Escape returns to the call",
             "same-page signaling resume",
             "320/390/768/1024/1440 overflow",
             "mobile focus drawer",
