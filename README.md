@@ -22,6 +22,12 @@ Use Node 24 (`.nvmrc`). Run `npm ci` separately in `backend`, `frontend` and
   Validate against staging and the existing schema before using production.
   Incompatible legacy columns or duplicate block pairs require review; startup
   fails instead of performing destructive repair.
+  Migration SQL has transaction-local statement/lock deadlines; runtime requests
+  keep a separate client query deadline. Do not add PostgreSQL timeout parameters
+  to pooled connection startup packets: Neon/PgBouncer can reject them.
+  SQL files must be UTF-8; the loader strips an optional leading byte-order mark
+  so Windows-written migrations are parsed correctly. Startup failures log the
+  migration filename, stage and redacted database error rather than hiding it.
 - Deploy frontend and backend protocol **2** together. Old clients must reload.
   Run a single backend instance: matchmaking, presence and recent safety targets
   are held in process memory.

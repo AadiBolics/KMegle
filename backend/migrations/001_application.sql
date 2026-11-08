@@ -1,4 +1,4 @@
-﻿CREATE TABLE IF NOT EXISTS users (
+CREATE TABLE IF NOT EXISTS users (
  id varchar(128) PRIMARY KEY, email_hash text UNIQUE, is_banned boolean NOT NULL DEFAULT false,
  created_at timestamptz NOT NULL DEFAULT now(), last_login timestamptz NOT NULL DEFAULT now()
 );

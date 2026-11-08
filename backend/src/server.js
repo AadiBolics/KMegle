@@ -220,8 +220,14 @@ require("./services/migrate")(db)
     app.set("schemaReady", true);
     server.listen(PORT, "0.0.0.0", () => console.log("Signaling server ready"));
   })
-  .catch(async () => {
-    console.error("Database migration failed; server will not start.");
-    await db.end();
-    process.exitCode = 1;
+  .catch(async (error) => {
+    console.error(
+      "Database migration failed; server will not start.",
+      require("./services/databaseError")(error),
+    );
+    try {
+      await db.end();
+    } finally {
+      process.exitCode = 1;
+    }
   });

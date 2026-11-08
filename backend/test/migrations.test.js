@@ -57,3 +57,47 @@ test(
     }
   },
 );
+
+test(
+  "legacy block records survive adding the new reference columns",
+  { skip: !process.env.TEST_DATABASE_URL },
+  async () => {
+    const db = new Pool({
+      connectionString: process.env.TEST_DATABASE_URL,
+      max: 1,
+      connectionTimeoutMillis: 3000,
+    });
+    const client = await db.connect();
+    const schema =
+      "migration_test_" +
+      require("node:crypto").randomUUID().replaceAll("-", "");
+    try {
+      await client.query(`CREATE SCHEMA ${schema}`);
+      await client.query(`SET search_path TO ${schema}`);
+      await client.query(
+        "CREATE TABLE user_blocks (blocker_id varchar(128),blocked_id varchar(128),UNIQUE(blocker_id,blocked_id))",
+      );
+      await client.query(
+        "INSERT INTO user_blocks VALUES('legacy-a','legacy-b')",
+      );
+      const adapter = {
+        connect: async () => ({ query: (q) => client.query(q), release() {} }),
+      };
+      await migrate(adapter);
+      await migrate(adapter);
+      const result = await client.query(
+        "SELECT blocker_id,blocked_id,block_ref,created_at FROM user_blocks",
+      );
+      assert.equal(result.rows.length, 1);
+      assert.equal(result.rows[0].blocker_id, "legacy-a");
+      assert.equal(result.rows[0].blocked_id, "legacy-b");
+      assert.ok(result.rows[0].block_ref);
+      assert.ok(result.rows[0].created_at);
+    } finally {
+      await client.query("SET search_path TO public");
+      await client.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`);
+      client.release();
+      await db.end();
+    }
+  },
+);
