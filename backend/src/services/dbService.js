@@ -1,37 +1,12 @@
-const db = require("../config/db");
-
-// Auto-initialize required moderation tables if they don't exist
-async function initModerationSchema() {
-  try {
-    await db.query(`
-      CREATE TABLE IF NOT EXISTS user_violations (
-        id SERIAL PRIMARY KEY,
-        uid VARCHAR(128) NOT NULL,
-        violation_type VARCHAR(64) NOT NULL,
-        timestamp TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-      );
-      CREATE INDEX IF NOT EXISTS idx_user_violations_uid_time ON user_violations(uid, timestamp DESC);
-
-      CREATE TABLE IF NOT EXISTS reports (
-        id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-        reporter_id VARCHAR(128) NOT NULL,
-        reported_id VARCHAR(128) NOT NULL,
-        reason TEXT,
-        status VARCHAR(64) DEFAULT 'pending',
-        created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-      );
-      CREATE INDEX IF NOT EXISTS idx_reports_reported_id ON reports(reported_id);
-    `);
-    console.log("🛡️ Moderation tables verified/created in database");
-  } catch (err) {
-    console.error("❌ Error initializing moderation tables:", err.message);
-  }
-}
-
-// Run schema verification on startup
-initModerationSchema();
-
+﻿const db = require("../config/db");
 const dbService = {
+  hasAccepted: async (uid) => {
+    const result = await db.query(
+      "SELECT version FROM user_acceptances WHERE uid=$1",
+      [uid],
+    );
+    return result.rows[0]?.version === "2026-11-08";
+  },
   // Sync user into database (KMEGLE-SEC-005: handles hash collision/recreated accounts)
   syncUser: async (userId, emailHash) => {
     try {
@@ -41,20 +16,13 @@ const dbService = {
         FROM users
         WHERE email_hash = $1
         `,
-        [emailHash]
+        [emailHash],
       );
 
-      if (
-        existingUser.rows.length > 0 &&
-        existingUser.rows[0].id !== userId
-      ) {
-        console.warn(
-          `⚠️ Email hash collision or recreated account for UID ${userId}. Nullifying old record hash.`
-        );
-        await db.query(
-          `UPDATE users SET email_hash = NULL WHERE id = $1`,
-          [existingUser.rows[0].id]
-        );
+      if (existingUser.rows.length > 0 && existingUser.rows[0].id !== userId) {
+        await db.query(`UPDATE users SET email_hash = NULL WHERE id = $1`, [
+          existingUser.rows[0].id,
+        ]);
       }
 
       const query = `
@@ -72,7 +40,7 @@ const dbService = {
 
       await db.query(query, [userId, emailHash]);
     } catch (err) {
-      console.error("❌ Error syncing user to DB:", err);
+      console.error("âŒ Error syncing user to DB:", err.code);
       throw err;
     }
   },
@@ -89,7 +57,7 @@ const dbService = {
       const res = await db.query(query, [userId]);
       return res.rows.length > 0 && res.rows[0].is_banned;
     } catch (err) {
-      console.error("❌ Error checking ban status:", err);
+      console.error("âŒ Error checking ban status:", err.code);
       // Fail closed: let the caller decide how to treat the error
       // (do NOT silently report "not banned" on a DB failure).
       throw err;
@@ -113,8 +81,8 @@ const dbService = {
       }
       return 0;
     } catch (err) {
-      console.error("❌ Error checking cooldown remaining:", err);
-      return 0;
+      console.error("âŒ Error checking cooldown remaining:", err.code);
+      throw err;
     }
   },
 
@@ -128,22 +96,28 @@ const dbService = {
       await db.query(query, [userId, violationType]);
       return true;
     } catch (err) {
-      console.error("❌ Error recording violation:", err);
+      console.error("âŒ Error recording violation:", err.code);
       return false;
     }
   },
 
   // Record a manual user report
-  recordReport: async (reporterUid, reportedUid, reason = "user_reported") => {
+  recordReport: async (
+    reporterUid,
+    reportedUid,
+    reason = "user_reported",
+    requestId = null,
+  ) => {
     try {
       const query = `
-        INSERT INTO reports (reporter_id, reported_id, reason, status, created_at)
-        VALUES ($1, $2, $3, 'pending', NOW())
+        INSERT INTO reports (reporter_id, reported_id, reason, request_id, status, created_at)
+        VALUES ($1, $2, $3, $4, 'pending', NOW())
+        ON CONFLICT (reporter_id,request_id) DO NOTHING
       `;
-      await db.query(query, [reporterUid, reportedUid, reason]);
+      await db.query(query, [reporterUid, reportedUid, reason, requestId]);
       return true;
     } catch (err) {
-      console.error("❌ Error recording user report:", err);
+      console.error("âŒ Error recording user report:", err.code);
       return false;
     }
   },
@@ -160,7 +134,7 @@ const dbService = {
       await db.query(query, [blockerId, blockedId]);
       return true;
     } catch (err) {
-      console.error("❌ Error blocking user:", err);
+      console.error("âŒ Error blocking user:", err.code);
       return false;
     }
   },
@@ -180,7 +154,7 @@ const dbService = {
       const res = await db.query(query, [user1Id, user2Id]);
       return res.rows.length > 0;
     } catch (err) {
-      console.error("❌ Error checking block status:", err);
+      console.error("âŒ Error checking block status:", err.code);
       // Fail closed: let the caller decide how to treat the error
       // (do NOT silently report "not blocked" on a DB failure).
       throw err;
@@ -218,14 +192,16 @@ const dbService = {
     const query = `
       SELECT blocker_id, blocked_id
       FROM user_blocks
-      WHERE blocker_id = ANY($1::text[]) OR blocked_id = ANY($1::text[])
+      WHERE blocker_id = ANY($1::text[]) AND blocked_id = ANY($1::text[])
     `;
 
     const res = await db.query(query, [userIds]);
 
     for (const row of res.rows) {
-      if (graph.has(row.blocker_id)) graph.get(row.blocker_id).add(row.blocked_id);
-      if (graph.has(row.blocked_id)) graph.get(row.blocked_id).add(row.blocker_id);
+      if (graph.has(row.blocker_id))
+        graph.get(row.blocker_id).add(row.blocked_id);
+      if (graph.has(row.blocked_id))
+        graph.get(row.blocked_id).add(row.blocker_id);
     }
 
     return graph;

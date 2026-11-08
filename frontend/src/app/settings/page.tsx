@@ -1,458 +1,76 @@
-"use client";
-
-import { useState } from "react";
+﻿"use client";
+import { useEffect, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useAuth } from "../../context/authContext";
 import { useTheme } from "../../context/themeContext";
-
+import "../chat/components/chat/call.css";
 export default function SettingsPage() {
-  const router = useRouter();
   const { user, loading, logout } = useAuth();
-  const { isDarkMode } = useTheme();
-  const [openPolicy, setOpenPolicy] = useState<"terms" | "guidelines" | "privacy" | null>(null);
-
-  const togglePolicy = (policy: "terms" | "guidelines" | "privacy") => {
-    setOpenPolicy((prev) => (prev === policy ? null : policy));
-  };
-
-  const handleLogout = async () => {
+  const { isDarkMode, toggleDarkMode } = useTheme();
+  const router = useRouter();
+  const [error, setError] = useState(""),
+    [pending, setPending] = useState(false);
+  useEffect(() => {
+    if (!loading && !user) router.replace("/");
+  }, [user, loading, router]);
+  const signout = async () => {
+    if (pending) return;
+    setPending(true);
+    setError("");
     try {
       await logout();
       router.replace("/");
-    } catch (error) {
-      console.error("Logout failed:", error);
+    } catch {
+      setError("Sign out failed. Please try again.");
+    } finally {
+      setPending(false);
     }
   };
-
-  if (loading) {
-    return (
-      <main
-        className={`min-h-screen flex items-center justify-center ${
-          isDarkMode
-            ? "bg-[#F7F2EA] text-[#211B14]"
-            : "bg-[#F7F2EA] text-[#211B14]"
-        }`}
-      >
-        <p className={isDarkMode ? "text-gray-400" : "text-gray-500"}>
-          Loading...
-        </p>
-      </main>
-    );
-  }
-
-  if (!user) {
-    router.replace("/");
-    return null;
-  }
-
   return (
-    <main
-      className={`min-h-screen px-4 py-8 transition-colors duration-300 ${
-        isDarkMode
-          ? "bg-[#F7F2EA] text-[#211B14]"
-          : "bg-[#F7F2EA] text-[#211B14]"
-      }`}
-    >
-      <div className="mx-auto w-full max-w-2xl">
-
-        {/* Header */}
-        <div className="flex items-center gap-4 mb-8">
-          <button
-            onClick={() => router.push("/chat")}
-            className={`w-10 h-10 rounded-full border flex items-center justify-center transition ${
-              isDarkMode
-                ? "bg-[#FFFDF9] border-[#E5DCD0] hover:bg-[#F7F2EA]"
-                : "bg-white border-gray-200 hover:bg-gray-100"
-            }`}
-            aria-label="Back to chat"
-          >
-            <svg
-              className="w-5 h-5"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M15 19l-7-7 7-7"
-              />
-            </svg>
-          </button>
-
-          <div>
-            <h1 className="text-2xl font-bold">
-              Settings
-            </h1>
-
-            <p
-              className={`text-sm ${
-                isDarkMode ? "text-gray-500" : "text-gray-600"
-              }`}
-            >
-              Manage your account and privacy
-            </p>
-          </div>
-        </div>
-
-        {/* Account */}
-        <section className="mb-8">
-          <h2
-            className={`text-xs font-bold uppercase tracking-widest mb-3 ${
-              isDarkMode ? "text-gray-500" : "text-gray-500"
-            }`}
-          >
-            Account
-          </h2>
-
-          <div
-            className={`border rounded-2xl p-5 transition-colors ${
-              isDarkMode
-                ? "bg-[#FFFDF9] border-[#E5DCD0] shadow-sm"
-                : "bg-[#FFFDF9] border-[#E5DCD0] shadow-sm"
-            }`}
-          >
-            <div className="flex items-center gap-4">
-              {user.photoURL ? (
-                <img
-                  src={user.photoURL}
-                  alt=""
-                  className="w-12 h-12 rounded-full"
-                />
-              ) : (
-                <div className="w-12 h-12 rounded-full bg-[#C24A17] flex items-center justify-center text-lg font-bold text-white">
-                  {user.email?.charAt(0).toUpperCase() || "U"}
-                </div>
-              )}
-
-              <div className="min-w-0">
-                <p className="font-semibold">
-                  {user.displayName || "KMegle User"}
-                </p>
-
-                <p
-                  className={`text-sm truncate ${
-                    isDarkMode ? "text-gray-500" : "text-gray-600"
-                  }`}
+    <main className="call-app consent-page">
+      <section className="account-card">
+        <Link href="/chat">← Back to camera check</Link>
+        <h1>Your corner of campus.</h1>
+        {loading ? (
+          <p>Loading your account…</p>
+        ) : (
+          user && (
+            <>
+              <h2>Account</h2>
+              <p>{user.email}</p>
+              <p>
+                Leaving chat turns off your devices. Camera and microphone
+                controls are available inside chat.
+              </p>
+              <div className="account-toolbar">
+                <button className="control-button" onClick={toggleDarkMode}>
+                  Use {isDarkMode ? "light" : "dark"} theme
+                </button>
+                <button
+                  className="control-button"
+                  disabled={pending}
+                  onClick={() => void signout()}
                 >
-                  {user.email}
-                </p>
+                  {pending ? "Signing out…" : "Sign out"}
+                </button>
               </div>
-            </div>
-          </div>
-        </section>
-
-        {/* Privacy & Safety */}
-        <section className="mb-8">
-          <h2 className="text-xs font-bold uppercase tracking-widest text-gray-500 mb-3">
-            Privacy & Safety
-          </h2>
-
-          <div
-            className={`border rounded-2xl overflow-hidden ${
-              isDarkMode
-                ? "bg-[#FFFDF9] border-[#E5DCD0] shadow-sm"
-                : "bg-[#FFFDF9] border-[#E5DCD0] shadow-sm"
-            }`}
-          >
-            <button
-              onClick={() => router.push("/settings/blocked")}
-              className={`w-full flex items-center justify-between p-5 transition text-left ${
-                isDarkMode
-                  ? "hover:bg-[#F7F2EA]"
-                  : "hover:bg-[#F7F2EA]"
-              }`}
-            >
-              <div>
-                <p className="font-semibold">
-                  Blocked Users
-                </p>
-
-                <p
-                  className={`text-sm mt-1 ${
-                    isDarkMode ? "text-gray-500" : "text-gray-600"
-                  }`}
-                >
-                  Manage users you have blocked
-                </p>
-              </div>
-
-              <svg
-                className="w-5 h-5 text-gray-500"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M9 5l7 7-7 7"
-                />
-              </svg>
-            </button>
-          </div>
-        </section>
-
-        {/* Terms & Policies */}
-        <section className="mb-8">
-          <h2 className="text-xs font-bold uppercase tracking-widest text-gray-500 mb-3">
-            Terms & Policies
-          </h2>
-
-          <div
-            className={`border rounded-2xl overflow-hidden ${
-              isDarkMode
-                ? "bg-[#FFFDF9] border-[#E5DCD0] shadow-sm"
-                : "bg-[#FFFDF9] border-[#E5DCD0] shadow-sm"
-            }`}
-          >
-            {/* Terms of Service */}
-            <div>
-              <button
-                onClick={() => togglePolicy("terms")}
-                className={`w-full flex items-center justify-between p-5 text-left transition ${
-                  isDarkMode ? "hover:bg-[#F7F2EA]" : "hover:bg-[#F7F2EA]"
-                }`}
-              >
-                <div>
-                  <p className="font-semibold">Terms of Service</p>
-                  <p
-                    className={`text-sm mt-1 ${
-                      isDarkMode ? "text-gray-400" : "text-gray-600"
-                    }`}
-                  >
-                    Rules, age requirements, and user agreements for using KMegle
-                  </p>
-                </div>
-                <svg
-                  className={`w-5 h-5 text-gray-500 transition-transform duration-200 ${
-                    openPolicy === "terms" ? "rotate-90" : ""
-                  }`}
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M9 5l7 7-7 7"
-                  />
-                </svg>
-              </button>
-
-              {openPolicy === "terms" && (
-                <div
-                  className={`px-5 pb-5 pt-2 text-sm border-t leading-relaxed ${
-                    isDarkMode
-                      ? "border-[#E5DCD0] text-[#4A4238] bg-[#FFFDF9]"
-                      : "border-gray-100 text-gray-700 bg-gray-50/50"
-                  }`}
-                >
-                  <div className="space-y-4">
-                    <div>
-                      <h4 className="font-semibold text-base mb-1">1. Age Requirement</h4>
-                      <p>
-                        You must be at least 18 years old (or the legal age of majority in your jurisdiction) to use KMegle video chat. Minors under 18 are strictly prohibited from using the platform.
-                      </p>
-                    </div>
-
-                    <div>
-                      <h4 className="font-semibold text-base mb-1">2. Peer-to-Peer (P2P) WebRTC Architecture</h4>
-                      <p>
-                        KMegle connects users via WebRTC, directly when possible or through a TURN relay when needed. Direct connections use Peer-to-Peer protocols for real-time video and audio communication. By using KMegle, you understand and acknowledge that P2P technology inherently exchanges network connection details (including public IP addresses) directly between video chat peers.
-                      </p>
-                    </div>
-
-                    <div>
-                      <h4 className="font-semibold text-base mb-1">3. User Conduct & Moderation</h4>
-                      <p>
-                        You agree to follow all local, state, and international laws. KMegle reserves the right to terminate access, suspend accounts, or permanently block Firebase UIDs and IP addresses without prior notice for any violation of these terms.
-                      </p>
-                    </div>
-
-                    <div>
-                      <h4 className="font-semibold text-base mb-1">4. Recording Disclaimer</h4>
-                      <p>
-                        While KMegle does not record or store any video or audio streams, we cannot prevent third-party peers from using external screen recording software. Never share personally identifiable information (PII), financial details, or passwords during video chats.
-                      </p>
-                    </div>
-                  </div>
-                </div>
-              )}
-            </div>
-
-            <div
-              className={
-                isDarkMode
-                  ? "border-t border-[#E5DCD0]"
-                  : "border-t border-gray-100"
-              }
-            />
-
-            {/* Community Guidelines */}
-            <div>
-              <button
-                onClick={() => togglePolicy("guidelines")}
-                className={`w-full flex items-center justify-between p-5 text-left transition ${
-                  isDarkMode ? "hover:bg-[#F7F2EA]" : "hover:bg-[#F7F2EA]"
-                }`}
-              >
-                <div>
-                  <p className="font-semibold">Community Guidelines</p>
-                  <p
-                    className={`text-sm mt-1 ${
-                      isDarkMode ? "text-gray-400" : "text-gray-600"
-                    }`}
-                  >
-                    Safety, behavior, and zero-tolerance policies
-                  </p>
-                </div>
-                <svg
-                  className={`w-5 h-5 text-gray-500 transition-transform duration-200 ${
-                    openPolicy === "guidelines" ? "rotate-90" : ""
-                  }`}
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M9 5l7 7-7 7"
-                  />
-                </svg>
-              </button>
-
-              {openPolicy === "guidelines" && (
-                <div
-                  className={`px-5 pb-5 pt-2 text-sm border-t leading-relaxed ${
-                    isDarkMode
-                      ? "border-[#E5DCD0] text-[#4A4238] bg-[#FFFDF9]"
-                      : "border-gray-100 text-gray-700 bg-gray-50/50"
-                  }`}
-                >
-                  <div className="space-y-4">
-                    <div>
-                      <h4 className="font-semibold text-base mb-1"> Zero-Tolerance Nudity & Sexual Content</h4>
-                      <p>
-                        Sexually explicit behavior, nudity, pornography, or suggestive content is strictly prohibited. Accounts engaging in such acts will face immediate permanent IP and UID bans.
-                      </p>
-                    </div>
-
-                    <div>
-                      <h4 className="font-semibold text-base mb-1"> Harassment, Hate Speech & Bullying</h4>
-                      <p>
-                        We do not tolerate racial slurs, hate speech, harassment, intimidation, discrimination, or abusive behavior of any kind. Respect all users regardless of background.
-                      </p>
-                    </div>
-
-                    <div>
-                      <h4 className="font-semibold text-base mb-1"> Illegal Acts & Threats</h4>
-                      <p>
-                        Promoting illegal activities, weapons, violence, self-harm, or making threats against others will result in immediate bans and potential referral to law enforcement agencies.
-                      </p>
-                    </div>
-
-                    <div>
-                      <h4 className="font-semibold text-base mb-1"> Reporting & Blocking</h4>
-                      <p>
-                        If you encounter anyone violating these rules, use the Block feature immediately. Blocking severs the connection and prevents future matchmaking with that user.
-                      </p>
-                    </div>
-                  </div>
-                </div>
-              )}
-            </div>
-
-            <div
-              className={
-                isDarkMode
-                  ? "border-t border-[#E5DCD0]"
-                  : "border-t border-gray-100"
-              }
-            />
-
-            {/* Privacy Policy */}
-            <div>
-              <button
-                onClick={() => togglePolicy("privacy")}
-                className={`w-full flex items-center justify-between p-5 text-left transition ${
-                  isDarkMode ? "hover:bg-[#F7F2EA]" : "hover:bg-[#F7F2EA]"
-                }`}
-              >
-                <div>
-                  <p className="font-semibold">Privacy Policy</p>
-                  <p
-                    className={`text-sm mt-1 ${
-                      isDarkMode ? "text-gray-400" : "text-gray-600"
-                    }`}
-                  >
-                    How we handle video streams, data, and user logs
-                  </p>
-                </div>
-                <svg
-                  className={`w-5 h-5 text-gray-500 transition-transform duration-200 ${
-                    openPolicy === "privacy" ? "rotate-90" : ""
-                  }`}
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M9 5l7 7-7 7"
-                  />
-                </svg>
-              </button>
-
-              {openPolicy === "privacy" && (
-                <div
-                  className={`px-5 pb-5 pt-2 text-sm border-t leading-relaxed ${
-                    isDarkMode
-                      ? "border-[#E5DCD0] text-[#4A4238] bg-[#FFFDF9]"
-                      : "border-gray-100 text-gray-700 bg-gray-50/50"
-                  }`}
-                >
-<div className="space-y-4 text-sm leading-relaxed text-[#4A4238]">
-<p>KMegle uses Google sign-in through Firebase Authentication. The service receives your account ID and email. Its database stores your account ID and a keyed hash of your email; service logs may include your email and account ID.</p>
-<p>Video and audio use WebRTC. Connections may be direct or use a TURN relay when needed. A direct connection can reveal your public IP address to the other participant. KMegle&apos;s reviewed application code does not record video or audio, but another participant can record their screen.</p>
-<p>For safety, KMegle stores reports, report reasons, blocks and violation records linked to account IDs. Automated content checks run in the browser during a session.</p>
-<p>Retention periods and the policies of hosting, authentication and relay providers still need to be confirmed. Do not share passwords, financial details or other private information in a chat.</p>
-</div>
-                </div>
-              )}
-            </div>
-          </div>
-        </section>
-
-        {/* Logout */}
-        <section>
-          <button
-            onClick={handleLogout}
-            className={`w-full rounded-2xl p-4 font-semibold transition ${
-              isDarkMode
-                ? "bg-red-500/10 border border-red-500/20 hover:bg-red-500/15 text-red-400"
-                : "bg-red-50 border border-red-200 hover:bg-red-100 text-red-600"
-            }`}
-          >
-            Log out
-          </button>
-        </section>
-
-        <p
-          className={`text-center text-xs mt-8 ${
-            isDarkMode ? "text-gray-600" : "text-gray-400"
-          }`}
-        >
-          KMegle
-        </p>
-      </div>
+              <h2>Privacy & safety</h2>
+              <p>
+                <Link href="/settings/blocked">Manage blocked students →</Link>
+              </p>
+              <p>
+                <Link href="/policies">
+                  Community rules, privacy and support →
+                </Link>
+              </p>
+              <p role="status" className="account-notice">
+                {error}
+              </p>
+            </>
+          )
+        )}
+      </section>
     </main>
   );
 }

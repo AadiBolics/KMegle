@@ -1,460 +1,193 @@
-"use client";
-
-import { useEffect, useRef, useState, useCallback } from "react";
+﻿"use client";
+import { useEffect, useState, useRef } from "react";
 import type { Socket } from "socket.io-client";
-
-// Dev-only logging helper — keeps debug noise out of production consoles.
-// console.error calls are intentionally left untouched so real errors
-// remain visible in production for diagnosis.
-const debugLog = (...args: unknown[]) => {
-  if (process.env.NODE_ENV !== "production") {
-    console.log(...args);
-  }
-};
-
-// --- Constants ---
-const WINDOW_SIZE = 6;           // Sliding window of 6 frames (~1.8 s at 3.3 Hz)
-const BAN_THRESHOLD = 4;         // Violations needed in window (local or remote) to trigger a ban/report
-const WARN_THRESHOLD = 2;        // Violations needed to show a warning blur (was 1/5)
-const SAMPLE_INTERVAL_MS = 300;  // ~3.3 Hz for fast sub-second detection
-const CANVAS_SIZE = 224;         // MobileNetV2 input resolution
-
-export interface NsfwPrediction {
-  Drawing?: number;
-  Hentai?: number;
-  Neutral?: number;
-  Porn?: number;
-  Sexy?: number;
-}
-
-export interface ModerationState {
-  isReady: boolean;
-  isWarning: boolean;
-  strikeCount: number;
-  lastPrediction: NsfwPrediction | null;
-  cooldownRemaining: number;
-  isCooldownActive: boolean;
-  isRemoteWarning: boolean;
-  remoteStrikeCount: number;
-}
-
+// These are local hints, never evidence for automatically penalizing another account.
 export function useNsfwModeration({
   localVideoRef,
   remoteVideoRef,
   isActive,
-  socket,
+  localEnabled = true,
   roomId,
   onCriticalViolation,
 }: {
   localVideoRef: React.RefObject<HTMLVideoElement | null>;
   remoteVideoRef?: React.RefObject<HTMLVideoElement | null>;
   isActive: boolean;
+  localEnabled?: boolean;
   socket?: Socket | null;
   roomId?: string | null;
   onCriticalViolation?: () => void;
 }) {
-  const workerRef = useRef<Worker | null>(null);
-  const [isReady, setIsReady] = useState(false);
-
-  // --- Local sender state ---
-  const [isWarning, setIsWarning] = useState(false);
-  const [strikeCount, setStrikeCount] = useState(0);
-  const [lastPrediction, setLastPrediction] = useState<NsfwPrediction | null>(null);
-  const [cooldownRemaining, setCooldownRemaining] = useState<number>(0);
-  const cooldownEndTimeRef = useRef<number>(0);
-
-  // --- Remote receiver state ---
-  const [isRemoteWarning, setIsRemoteWarning] = useState(false);
-  const [remoteStrikeCount, setRemoteStrikeCount] = useState(0);
-
-  // Sliding windows — one per feed
-  const localWindowRef = useRef<boolean[]>([]);
-  const remoteWindowRef = useRef<boolean[]>([]);
-
-  // Off-screen canvases — one per feed
-  const localCanvasRef = useRef<HTMLCanvasElement | null>(null);
-  const remoteCanvasRef = useRef<HTMLCanvasElement | null>(null);
-
-  const intervalRef = useRef<NodeJS.Timeout | null>(null);
-  const frameCountRef = useRef(0);
-
-  // Evaluation guards
-  const isLocalEvaluatingRef = useRef(false);
-  const isRemoteEvaluatingRef = useRef(false);
-
-  // Stable references for socket, room and callbacks
-  const socketRef = useRef(socket);
+  const [isReady, setReady] = useState(false),
+    [isWarning, setWarning] = useState(false),
+    [isRemoteWarning, setRemoteWarning] = useState(false);
+  const [unavailable, setUnavailable] = useState(false);
+  const enabled = useRef(localEnabled);
   useEffect(() => {
-    socketRef.current = socket;
-  }, [socket]);
-
-  const roomIdRef = useRef(roomId);
+    enabled.current = localEnabled;
+  }, [localEnabled]);
   useEffect(() => {
-    roomIdRef.current = roomId;
-  }, [roomId]);
-
-  const onCriticalViolationRef = useRef(onCriticalViolation);
-  useEffect(() => {
-    onCriticalViolationRef.current = onCriticalViolation;
-  }, [onCriticalViolation]);
-
-  // Start cooldown with exact timestamp
-  const startCooldown = useCallback((seconds: number) => {
-    cooldownEndTimeRef.current = Date.now() + seconds * 1000;
-    setCooldownRemaining(seconds);
-  }, []);
-
-  // Server-side cooldown listener
-  useEffect(() => {
-    if (!socket) return;
-
-    const handleCooldown = (data: { remaining: number }) => {
-      if (data?.remaining && data.remaining > 0) {
-        startCooldown(data.remaining);
+    if (!isActive || !roomId) return;
+    let alive = true,
+      worker: Worker | null = null,
+      ready = false,
+      nextFrame = 0;
+    const pending = new Map<string, number>(),
+      submitted = new Map<string, number>();
+    const windows: { local: boolean[]; remote: boolean[] } = {
+      local: [],
+      remote: [],
+    };
+    const canvas = document.createElement("canvas");
+    canvas.width = 224;
+    canvas.height = 224;
+    const generation = crypto.randomUUID();
+    const reset = () => {
+      if (alive) {
+        setReady(false);
+        setWarning(false);
+        setRemoteWarning(false);
       }
     };
-
-    socket.on("cooldown_active", handleCooldown);
-    return () => {
-      socket.off("cooldown_active", handleCooldown);
+    queueMicrotask(() => {
+      reset();
+      if (alive) setUnavailable(false);
+    });
+    const fail = () => {
+      if (!alive) return;
+      ready = false;
+      pending.clear();
+      worker?.terminate();
+      reset();
+      setUnavailable(true);
     };
-  }, [socket, startCooldown]);
-
-  // Rock-solid timestamp-based countdown timer: immune to render cycles
-  useEffect(() => {
-    if (cooldownRemaining <= 0) return;
-
-    const timer = setInterval(() => {
-      const now = Date.now();
-      const left = Math.max(0, Math.ceil((cooldownEndTimeRef.current - now) / 1000));
-      setCooldownRemaining(left);
-      if (left <= 0) {
-        clearInterval(timer);
-      }
-    }, 500);
-
-    return () => clearInterval(timer);
-  }, [cooldownRemaining > 0]); // Only re-run when cooldown status toggles
-
-  // ----------------------------------------
-  // CALIBRATED CONTENT EVALUATION
-  // Eliminates false positives on ceiling fans, blank walls, & textures
-  // while rapidly catching nudity on mobile screens and webcam feeds
-  // ----------------------------------------
-
-  const checkIsViolating = (pred: NsfwPrediction): boolean => {
-    const porn = pred.Porn || 0;
-    const sexy = pred.Sexy || 0;
-    const hentai = pred.Hentai || 0;
-    const neutral = pred.Neutral || 0;
-    const drawing = pred.Drawing || 0;
-
-    // Early exit: strong neutral / drawing signal means the frame is clearly safe
-    // (ceiling, wall, fan, desk, background — all score high neutral)
-    if (neutral + drawing >= 0.55) {
-      return false;
-    }
-
-    // Rule 1: Neutral is dominant and explicit signals are very low — safe
-    if (neutral >= 0.40 && porn < 0.20 && sexy < 0.25) {
-      return false;
-    }
-
-    // Rule 2: Both Porn and Sexy are too low to be real nudity — safe
-    // (covers ceiling fans, geometric patterns that confuse the model)
-    if (porn < 0.20 && sexy < 0.28) {
-      // Only exception: extreme hentai with almost no neutral context
-      if (hentai > 0.90 && neutral < 0.10) {
-        return true;
-      }
-      return false;
-    }
-
-    // Rule 3: High-confidence direct explicit nudity
-    if (porn > 0.45) {
-      return true;
-    }
-
-    // Rule 4: Strong combined suggestive + explicit signal with low neutral context
-    // Requires BOTH porn AND sexy to be elevated, not just one
-    if (porn > 0.25 && sexy > 0.25 && neutral < 0.40 && porn + sexy > 0.55) {
-      return true;
-    }
-
-    return false;
-  };
-
-  const evaluateLocal = useCallback((pred: NsfwPrediction) => {
-    const isViolating = checkIsViolating(pred);
-
-    const windowArr = localWindowRef.current;
-    windowArr.push(isViolating);
-    if (windowArr.length > WINDOW_SIZE) windowArr.shift();
-
-    const violations = windowArr.filter(Boolean).length;
-    setStrikeCount(violations);
-
-    if (violations >= BAN_THRESHOLD) {
-      // Sustained critical violation (4+ of last 6 frames): trigger 30s cooldown
-      console.warn("🚨 Critical NSFW violation detected on local feed");
-      startCooldown(30);
-      setIsWarning(false);
-      localWindowRef.current = [];
-      setStrikeCount(0);
-      socketRef.current?.emit("report_nsfw_violation", { roomId: roomIdRef.current });
-      onCriticalViolationRef.current?.();
-    } else if (violations >= WARN_THRESHOLD) {
-      // 2+ violations in window: show warning blur (not a ban yet)
-      setIsWarning(true);
-    } else {
-      // 0–1 violations: clear — ceiling fans, walls, textures land here
-      setIsWarning(false);
-    }
-  }, [startCooldown]);
-
-  const evaluateRemote = useCallback((pred: NsfwPrediction) => {
-    const isViolating = checkIsViolating(pred);
-
-    const windowArr = remoteWindowRef.current;
-    windowArr.push(isViolating);
-    if (windowArr.length > WINDOW_SIZE) windowArr.shift();
-
-    const violations = windowArr.filter(Boolean).length;
-    setRemoteStrikeCount(violations);
-
-    if (violations >= BAN_THRESHOLD) {
-      // Sustained remote violation: disconnect and report peer to server
-      console.warn("🚨 Sustained NSFW violation detected on remote feed");
-      remoteWindowRef.current = [];
-      setRemoteStrikeCount(0);
-      setIsRemoteWarning(false);
-      socketRef.current?.emit("report_peer_nsfw_violation", { roomId: roomIdRef.current });
-      onCriticalViolationRef.current?.();
-    } else if (violations >= 1) {
-      // Instant protection: blur remote feed on first detection
-      setIsRemoteWarning(true);
-    } else {
-      setIsRemoteWarning(false);
-    }
-  }, []);
-
-  const evaluateLocalRef = useRef(evaluateLocal);
-  useEffect(() => {
-    evaluateLocalRef.current = evaluateLocal;
-  }, [evaluateLocal]);
-
-  const evaluateRemoteRef = useRef(evaluateRemote);
-  useEffect(() => {
-    evaluateRemoteRef.current = evaluateRemote;
-  }, [evaluateRemote]);
-
-  // ----------------------------------------
-  // WEB WORKER INITIALIZATION
-  // ----------------------------------------
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-
-    let worker: Worker;
+    const deadline = setTimeout(() => {
+      if (!ready) fail();
+    }, 15000);
     try {
       worker = new Worker(
         new URL("../../../workers/nsfwWorker.ts", import.meta.url),
-        { type: "module" }
+        { type: "module" },
       );
-      workerRef.current = worker;
-
-      worker.onmessage = (event: MessageEvent) => {
-        const { type, source, predictions, error } = event.data || {};
-
-        if (source === "local") {
-          isLocalEvaluatingRef.current = false;
-        } else if (source === "remote") {
-          isRemoteEvaluatingRef.current = false;
-        } else {
-          isLocalEvaluatingRef.current = false;
-          isRemoteEvaluatingRef.current = false;
+      worker.onmessage = ({ data }) => {
+        if (!alive) return;
+        if (data.type === "READY") {
+          clearTimeout(deadline);
+          ready = true;
+          setReady(true);
+          return;
         }
-
-        if (type === "READY") {
-          setIsReady(true);
-        } else if (type === "PREDICTION" && predictions) {
-          if (source === "local") {
-            setLastPrediction(predictions);
-            evaluateLocalRef.current(predictions);
-          } else if (source === "remote") {
-            evaluateRemoteRef.current(predictions);
-          }
-        } else if (type === "ERROR") {
-          debugLog("[nsfwModeration] Worker error:", error);
+        if (data.type === "ERROR" && !data.source) {
+          fail();
+          return;
+        }
+        if (data.generation !== generation) return;
+        const source = data.source as "local" | "remote";
+        if (pending.get(source) !== data.frameId) return;
+        pending.delete(source);
+        if (data.type === "ERROR") {
+          fail();
+          return;
+        }
+        if (data.type !== "PREDICTION" || !data.predictions) return;
+        const p = data.predictions;
+        const flagged =
+          (p.Neutral || 0) + (p.Drawing || 0) < 0.55 &&
+          ((p.Porn || 0) > 0.45 ||
+            ((p.Porn || 0) > 0.25 &&
+              (p.Sexy || 0) > 0.25 &&
+              (p.Neutral || 0) < 0.4));
+        const history = windows[source];
+        history.push(flagged);
+        if (history.length > 6) history.shift();
+        const count = history.filter(Boolean).length;
+        if (source === "local") setWarning(count >= 2);
+        else setRemoteWarning(count >= 1);
+        if (count >= 4) {
+          ready = false;
+          onCriticalViolation?.();
         }
       };
-
-      worker.onerror = (e) => {
-        console.error("[nsfwModeration] Worker uncaught error:", e);
-      };
-
+      worker.onerror = fail;
       worker.postMessage({ type: "INIT" });
-    } catch (err) {
-      debugLog("[nsfwModeration] Could not instantiate NSFW worker:", err);
+    } catch {
+      queueMicrotask(fail);
     }
-
-    return () => {
-      workerRef.current?.terminate();
-      workerRef.current = null;
-    };
-  }, []);
-
-  // ----------------------------------------
-  // OFF-SCREEN CANVASES
-  // ----------------------------------------
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-
-    const localCanvas = document.createElement("canvas");
-    localCanvas.width = CANVAS_SIZE;
-    localCanvas.height = CANVAS_SIZE;
-    localCanvasRef.current = localCanvas;
-
-    const remoteCanvas = document.createElement("canvas");
-    remoteCanvas.width = CANVAS_SIZE;
-    remoteCanvas.height = CANVAS_SIZE;
-    remoteCanvasRef.current = remoteCanvas;
-  }, []);
-
-  // ----------------------------------------
-  // FOCUSED 65% CENTER-CROP CAPTURE
-  // Magnifies center where users hold phones/photos while maintaining natural aspect ratio
-  // ----------------------------------------
-
-  const captureLocalFrame = useCallback(async () => {
-    const video = localVideoRef.current;
-    const canvas = localCanvasRef.current;
-    const worker = workerRef.current;
-
-    if (!video || !canvas || !worker || isLocalEvaluatingRef.current) return;
-    if (video.readyState < 2 || video.paused || video.ended) return;
-
-    try {
-      const ctx = canvas.getContext("2d", { willReadFrequently: true });
-      if (!ctx) return;
-
-      const vWidth = video.videoWidth || 640;
-      const vHeight = video.videoHeight || 480;
-      const minDim = Math.min(vWidth, vHeight);
-
-      // 65% center crop directly captures the user & any handheld phone/tablet/photo
-      const cropSize = minDim * 0.65;
-      const sx = (vWidth - cropSize) / 2;
-      const sy = (vHeight - cropSize) / 2;
-
-      ctx.drawImage(video, sx, sy, cropSize, cropSize, 0, 0, CANVAS_SIZE, CANVAS_SIZE);
-      const imageBitmap = await createImageBitmap(canvas);
-
-      isLocalEvaluatingRef.current = true;
-      frameCountRef.current += 1;
-
-      worker.postMessage(
-        {
-          type: "CHECK_FRAME",
-          source: "local",
-          imageBitmap,
-          frameId: frameCountRef.current,
-        },
-        [imageBitmap]
-      );
-    } catch (err) {
-      isLocalEvaluatingRef.current = false;
-      debugLog("[nsfwModeration] Local frame capture error:", err);
-    }
-  }, [localVideoRef]);
-
-  const captureRemoteFrame = useCallback(async () => {
-    const video = remoteVideoRef?.current;
-    const canvas = remoteCanvasRef.current;
-    const worker = workerRef.current;
-
-    if (!video || !canvas || !worker || isRemoteEvaluatingRef.current) return;
-    if (video.readyState < 2 || video.paused || video.ended) return;
-
-    try {
-      const ctx = canvas.getContext("2d", { willReadFrequently: true });
-      if (!ctx) return;
-
-      const vWidth = video.videoWidth || 640;
-      const vHeight = video.videoHeight || 480;
-      const minDim = Math.min(vWidth, vHeight);
-
-      const cropSize = minDim * 0.65;
-      const sx = (vWidth - cropSize) / 2;
-      const sy = (vHeight - cropSize) / 2;
-
-      ctx.drawImage(video, sx, sy, cropSize, cropSize, 0, 0, CANVAS_SIZE, CANVAS_SIZE);
-      const imageBitmap = await createImageBitmap(canvas);
-
-      isRemoteEvaluatingRef.current = true;
-      frameCountRef.current += 1;
-
-      worker.postMessage(
-        {
-          type: "CHECK_FRAME",
-          source: "remote",
-          imageBitmap,
-          frameId: frameCountRef.current,
-        },
-        [imageBitmap]
-      );
-    } catch (err) {
-      isRemoteEvaluatingRef.current = false;
-      debugLog("[nsfwModeration] Remote frame capture error:", err);
-    }
-  }, [remoteVideoRef]);
-
-  // ----------------------------------------
-  // FRAME SAMPLING LOOP (~3.3 Hz)
-  // ----------------------------------------
-
-  useEffect(() => {
-    if (!isActive || cooldownRemaining > 0) {
-      if (intervalRef.current) {
-        clearInterval(intervalRef.current);
-        intervalRef.current = null;
-      }
-
-      setIsWarning(false);
-      setIsRemoteWarning(false);
-      localWindowRef.current = [];
-      remoteWindowRef.current = [];
-      setStrikeCount(0);
-      setRemoteStrikeCount(0);
-      return;
-    }
-
-    intervalRef.current = setInterval(() => {
-      captureLocalFrame();
-      captureRemoteFrame();
-    }, SAMPLE_INTERVAL_MS);
-
-    return () => {
-      if (intervalRef.current) {
-        clearInterval(intervalRef.current);
-        intervalRef.current = null;
+    const sample = async (
+      source: "local" | "remote",
+      video: HTMLVideoElement | null | undefined,
+    ) => {
+      if (
+        !ready ||
+        !worker ||
+        pending.has(source) ||
+        !video ||
+        video.readyState < 2 ||
+        video.paused
+      )
+        return;
+      const frameId = ++nextFrame;
+      pending.set(source, frameId);
+      submitted.set(source, Date.now());
+      try {
+        const ctx = canvas.getContext("2d");
+        if (!ctx) {
+          pending.delete(source);
+          return;
+        }
+        ctx.drawImage(video, 0, 0, 224, 224);
+        const bitmap = await createImageBitmap(canvas);
+        if (!alive || !ready) {
+          bitmap.close();
+          return;
+        }
+        worker.postMessage(
+          {
+            type: "CHECK_FRAME",
+            source,
+            frameId,
+            generation,
+            imageBitmap: bitmap,
+          },
+          [bitmap],
+        );
+      } catch {
+        pending.delete(source);
       }
     };
-  }, [isActive, cooldownRemaining > 0, captureLocalFrame, captureRemoteFrame]);
-
-  // ----------------------------------------
-  // PUBLIC API
-  // ----------------------------------------
-
+    const interval = setInterval(() => {
+      for (const source of pending.keys())
+        if (Date.now() - (submitted.get(source) || 0) > 10000) {
+          fail();
+          return;
+        }
+      if (enabled.current) void sample("local", localVideoRef.current);
+      else {
+        windows.local = [];
+        setWarning(false);
+      }
+      void sample("remote", remoteVideoRef?.current);
+    }, 500);
+    return () => {
+      alive = false;
+      clearTimeout(deadline);
+      clearInterval(interval);
+      worker?.terminate();
+      pending.clear();
+    };
+  }, [isActive, roomId, localVideoRef, remoteVideoRef, onCriticalViolation]);
   return {
-    isReady,
-    isWarning,
-    strikeCount,
-    lastPrediction,
-    cooldownRemaining,
-    isCooldownActive: cooldownRemaining > 0,
-    isRemoteWarning,
-    remoteStrikeCount,
+    moderationStatus: !isActive
+      ? "inactive"
+      : isReady
+        ? "ready"
+        : unavailable
+          ? "unavailable"
+          : "loading",
+    isReady: isActive && isReady,
+    isWarning: isActive && localEnabled && isWarning,
+    isRemoteWarning: isActive && isRemoteWarning,
+    isCooldownActive: false,
+    cooldownRemaining: 0,
   };
 }

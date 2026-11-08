@@ -1,12 +1,20 @@
 // Hold a room across transport reconnects, never across unrelated page sessions.
-const AWAY_GRACE_MS = Math.max(1000, parseInt(process.env.AWAY_GRACE_MS || '15000', 10) || 15000);
+const AWAY_GRACE_MS = Math.max(
+  1000,
+  parseInt(process.env.AWAY_GRACE_MS || "15000", 10) || 15000,
+);
 const away = new Map();
+const { envelope } = require("./sessionProtocol");
 
 function sessionOf(socket) {
   const value = socket.handshake?.auth?.sessionId;
-  return typeof value === 'string' && /^[A-Za-z0-9_-]{16,128}$/.test(value) ? value : null;
+  return typeof value === "string" && /^[A-Za-z0-9_-]{16,128}$/.test(value)
+    ? value
+    : null;
 }
-function keyOf(userId, sessionId) { return JSON.stringify([userId, sessionId]); }
+function keyOf(userId, sessionId) {
+  return JSON.stringify([userId, sessionId]);
+}
 function clearKey(key) {
   const entry = away.get(key);
   if (!entry) return;
@@ -20,8 +28,13 @@ function teardownRoom(io, roomService, roomId, goneSocketId) {
   const room = roomService.getRoom(roomId);
   if (!room) return;
   clearRoom(roomId);
-  const peer = roomService.getOtherUser(roomId, goneSocketId);
-  if (peer) io.to(peer.socketId).emit('stranger_disconnected');
+  const targets = goneSocketId
+    ? [roomService.getOtherUser(roomId, goneSocketId)].filter(Boolean)
+    : [room.u1, room.u2];
+  for (const peer of targets)
+    io.to(peer.socketId).emit("stranger_disconnected", envelope(roomId, room));
+  for (const member of [room.u1, room.u2])
+    io.sockets?.sockets?.get(member.socketId)?.leave(roomId);
   roomService.deleteRoom(roomId);
 }
 function markAway({ io, roomService, roomId, userId, socketId, sessionId }) {
@@ -31,9 +44,12 @@ function markAway({ io, roomService, roomId, userId, socketId, sessionId }) {
   clearKey(key);
   if (!roomService.isMember(roomId, socketId)) return;
   const peer = roomService.getOtherUser(roomId, socketId);
-  if (peer) io.to(peer.socketId).emit('partner_connection_lost', {
-    message: "Stranger's connection dropped. Waiting for them to reconnect...",
-  });
+  if (peer)
+    io.to(peer.socketId).emit("partner_connection_lost", {
+      ...envelope(roomId, roomService.getRoom(roomId)),
+      message:
+        "Stranger's connection dropped. Waiting for them to reconnect...",
+    });
   const entry = { roomId, socketId, timer: null };
   entry.timer = setTimeout(() => {
     if (away.get(key) !== entry) return;
@@ -50,14 +66,17 @@ function resume({ io, roomService, socket }) {
   const entry = away.get(key);
   if (!entry) return false;
   clearKey(key);
-  if (!roomService.updateSocketId(entry.roomId, userId, socket.id, entry.socketId)) {
-    socket.emit('session_resume_result', { resumed: false });
+  if (
+    !roomService.updateSocketId(entry.roomId, userId, socket.id, entry.socketId)
+  ) {
+    socket.emit("session_resume_result", { resumed: false });
     return true;
   }
   socket.join(entry.roomId);
   const peer = roomService.getOtherUser(entry.roomId, socket.id);
-  if (peer) io.to(peer.socketId).emit('partner_reconnected');
-  socket.emit('session_resume_result', { resumed: true, roomId: entry.roomId });
+  const scope = envelope(entry.roomId, roomService.getRoom(entry.roomId));
+  if (peer) io.to(peer.socketId).emit("partner_reconnected", scope);
+  socket.emit("session_resume_result", { resumed: true, ...scope });
   return true;
 }
 function endAwayForUser({ io, roomService, userId, sessionId }) {
@@ -68,4 +87,15 @@ function endAwayForUser({ io, roomService, userId, sessionId }) {
   clearKey(key);
   teardownRoom(io, roomService, entry.roomId, entry.socketId);
 }
-module.exports = { AWAY_GRACE_MS, markAway, resume, clearRoom, endAwayForUser, sessionOf };
+function endRoom({ io, roomService, roomId, goneSocketId }) {
+  teardownRoom(io, roomService, roomId, goneSocketId);
+}
+module.exports = {
+  AWAY_GRACE_MS,
+  markAway,
+  resume,
+  clearRoom,
+  endAwayForUser,
+  sessionOf,
+  endRoom,
+};

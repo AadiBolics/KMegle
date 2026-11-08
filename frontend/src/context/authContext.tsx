@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import {
   createContext,
@@ -40,22 +40,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const login = async () => {
-  try {
     await signInWithPopup(auth, googleProvider);
-  } catch (error) {
-    const code =
-      error instanceof Object && "code" in error
-        ? (error as { code?: string }).code
-        : undefined;
-
-    if (code === "auth/cancelled-popup-request") {
-      console.log("A Google sign-in popup is already in progress.");
-      return;
-    }
-
-    throw error;
-  }
-};
+  };
 
   const logout = async () => {
     await signOut(auth);

@@ -1,4 +1,4 @@
-const crypto = require("crypto");
+﻿const crypto = require("crypto");
 const Node = require("./Node");
 const dbService = require("../services/dbService");
 const roomService = require("../services/roomService");
@@ -121,7 +121,7 @@ class MatchmakerQueue {
       try {
         blockGraph = await dbService.getBlockGraphForUsers(queuedUserIds);
       } catch (err) {
-        console.error("❌ Error fetching block graph:", err);
+        console.error("âŒ Error fetching block graph:", err);
       }
 
       if (!blockGraph) needsRetry = true;
@@ -155,7 +155,10 @@ class MatchmakerQueue {
           const hasBlocked = isBlockedPair(user1.userId, user2.userId);
 
           // KMEGLE-SEC-010: Ensure neither user disconnected or was matched during async DB lookup
-          if (!this.nodesMap.has(user1.socket.id) || !this.nodesMap.has(user2.socket.id)) {
+          if (
+            !this.nodesMap.has(user1.socket.id) ||
+            !this.nodesMap.has(user2.socket.id)
+          ) {
             break;
           }
 
@@ -164,14 +167,15 @@ class MatchmakerQueue {
             break;
           }
 
-          console.log(
-            ` Skipped match due to block rules between ${user1.userId} and ${user2.userId}`
-          );
-
           user2 = user2.next;
         }
 
-        if (!foundMatch || !user2 || !this.nodesMap.has(user1.socket.id) || !this.nodesMap.has(user2.socket.id)) {
+        if (
+          !foundMatch ||
+          !user2 ||
+          !this.nodesMap.has(user1.socket.id) ||
+          !this.nodesMap.has(user2.socket.id)
+        ) {
           this.rotateHeadToTail();
           attempts++;
           continue;
@@ -187,11 +191,7 @@ class MatchmakerQueue {
         // KMEGLE-SEC-014: Session nonce to prevent cross-session WebRTC race conditions
         const sessionNonce = crypto.randomUUID();
 
-        roomService.createRoom(
-          roomId,
-          user1,
-          user2
-        );
+        roomService.createRoom(roomId, user1, user2);
 
         const roomObj = roomService.getRoom(roomId);
         if (roomObj) {
@@ -220,10 +220,6 @@ class MatchmakerQueue {
           roomId,
           sessionNonce,
         });
-
-        console.log(
-          ` Match created [Room ${roomId}]: ${user1.userId} and ${user2.userId}`
-        );
       }
     } finally {
       this.isMatching = false;

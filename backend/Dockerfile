@@ -1,5 +1,5 @@
-# Use Node 20 to match the frontend and stay on current LTS
-FROM node:20-alpine
+# Use supported Node 24 LTS for both services
+FROM node:24-alpine
 
 # Set production environment to optimize library performance
 ENV NODE_ENV=production
@@ -10,7 +10,7 @@ WORKDIR /app
 COPY package*.json ./
 
 # Install only production dependencies to keep the image slim
-RUN npm install --omit=dev
+RUN npm ci --omit=dev
 
 # Copy the rest of the signaling server code
 COPY . .

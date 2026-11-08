@@ -1,10 +1,10 @@
-const { Pool } = require("pg");
+﻿const { Pool } = require("pg");
 require("dotenv").config();
 
 // Safety check
 if (!process.env.DATABASE_URL) {
   console.error(
-    "🚨 CRITICAL ERROR: DATABASE_URL is missing! Node cannot find your .env file."
+    "🚨 CRITICAL ERROR: DATABASE_URL is missing! Node cannot find your .env file.",
   );
   process.exit(1);
 }
@@ -39,22 +39,9 @@ const pool = new Pool({
   // Fail fast if the pool is fully saturated rather than hanging forever
   // (pg's default is to wait indefinitely for a free connection).
   connectionTimeoutMillis: 5000,
+  statement_timeout: 5000,
+  query_timeout: 6000,
 });
 
-pool.connect((err, client, release) => {
-  if (err) {
-    console.error("❌ Database connection error:", err.stack);
-    // Fail fast: don't let the process limp along without a working DB
-    // connection — that leads to silent degraded behavior (e.g. fail-open
-    // ban checks) later instead of a loud deploy failure now.
-    process.exit(1);
-  } else {
-    console.log("🗄️ Successfully connected to Neon PostgreSQL Database!");
-  }
-
-  if (client) {
-    release();
-  }
-});
-
+pool.on("error", () => console.error("Database pool connection failed"));
 module.exports = pool;

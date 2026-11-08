@@ -1,1623 +1,1282 @@
-"use client";
-
-import {
-  FormEvent,
-  useCallback,
-  useEffect,
-  useRef,
-  useState,
-} from "react";
+﻿"use client";
+import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { io, Socket } from "socket.io-client";
-
-import { ChatMessage, ConnectionPhase } from "../types/chat";
 import { useAuth } from "../../../context/authContext";
+import { ChatMessage, ConnectionPhase } from "../types/chat";
 
-// Dev-only logging helper — keeps debug noise out of production consoles.
-// console.error calls are intentionally left untouched so real errors
-// remain visible in production for diagnosis.
-const debugLog = (...args: unknown[]) => {
-  if (process.env.NODE_ENV !== "production") {
-    console.log(...args);
-  }
+type Match = { roomId: string; sessionNonce: string; role?: string };
+type Signal = Match & {
+  negotiationId: number;
+  offer?: RTCSessionDescriptionInit;
+  answer?: RTCSessionDescriptionInit;
+  candidate?: RTCIceCandidateInit;
 };
-
-// In production the Next.js rewrite in next.config.ts proxies
-// /socket.io/* and /api/backend/* through Vercel to the Render backend.
-// Locally the same paths hit localhost:5000 via the dev-server proxy.
-// The browser NEVER makes direct requests to onrender.com.
-function getSocketUrl() {
-  if (typeof window === "undefined") return "http://localhost:5000";
-  // In local development, connect directly to localhost:5000 to avoid proxy latency/quirks
-  if (
-    window.location.hostname === "localhost" ||
-    window.location.hostname === "127.0.0.1"
-  ) {
-    return process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:5000";
-  }
-  // In production (Vercel), connect to the current origin so all traffic
-  // is proxied through Vercel, bypassing ISP/campus DNS blocks on *.onrender.com.
-  return window.location.origin;
-}
-
-const MAX_MESSAGE_LENGTH = 1000;
-
-// Modest resolution keeps bandwidth, TURN usage and NSFW
-// sampling cost reasonable on phones and campus Wi-Fi.
-const MEDIA_CONSTRAINTS: MediaStreamConstraints = {
+type Call = Match & {
+  pc: RTCPeerConnection;
+  epoch: number;
+  initiator: boolean;
+  candidates: Map<number, RTCIceCandidateInit[]>;
+  timer?: ReturnType<typeof setTimeout>;
+  recovery?: ReturnType<typeof setTimeout>;
+  disconnect?: ReturnType<typeof setTimeout>;
+  restarting: boolean;
+  playable: boolean;
+};
+const constraints: MediaStreamConstraints = {
   video: {
     width: { ideal: 640 },
     height: { ideal: 480 },
     frameRate: { ideal: 24, max: 30 },
   },
-  audio: {
-    echoCancellation: true,
-    noiseSuppression: true,
-  },
+  audio: { echoCancellation: true, noiseSuppression: true },
 };
-
-// Maps a getUserMedia failure to a plain-language explanation.
-function mediaErrorStatus(error: unknown): string {
-  const errorName = error instanceof Error ? error.name : undefined;
-  const errorMessage = error instanceof Error ? error.message : undefined;
-  const isPermissionError =
-    errorName === "NotAllowedError" || errorName === "PermissionDeniedError";
-  const isNoDevice =
-    errorName === "NotFoundError" || errorName === "DevicesNotFoundError";
-  const isBusyDevice =
-    errorName === "NotReadableError" || errorName === "TrackStartError";
-
-  if (isPermissionError) {
-    return "Camera and microphone access is blocked. Allow it in your browser's site settings, then try again.";
-  }
-  if (isNoDevice) {
-    return "No camera or microphone found. Connect one and try again.";
-  }
-  if (isBusyDevice) {
-    return "Your camera or microphone is being used by another app. Close it and try again.";
-  }
-  return errorMessage || "Failed to start session. Please try again.";
+const baseIce: RTCConfiguration = {
+  iceTransportPolicy: "all",
+  iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
+};
+const diagnosticsEnabled =
+  process.env.NEXT_PUBLIC_CONNECTION_DIAGNOSTICS === "true";
+function origin() {
+  return /^(localhost|127\.0\.0\.1)$/.test(location.hostname)
+    ? process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:5000"
+    : location.origin;
 }
-// "disconnected" is often a brief network blip that recovers by itself, so
-// give the connection a moment before treating it as a lost partner.
-const DISCONNECT_GRACE_MS = 6000;
-// After a hard ICE failure or a mid-call reconnect, one ICE restart attempt
-// gets this long to recover before the call is declared lost.
-const ICE_RESTART_GRACE_MS = 8000;
-// On a mid-call reconnect, wait this long for the server's resume verdict
-// before falling back to a fresh search (also covers old servers that never
-// send one).
-const RESUME_FALLBACK_MS = 4000;
-
+function api(path: string) {
+  return /^(localhost|127\.0\.0\.1)$/.test(location.hostname)
+    ? `${origin()}/api/${path}`
+    : `/api/backend/${path}`;
+}
+async function getToken(
+  user: { getIdToken: () => Promise<string> },
+  signal?: AbortSignal,
+) {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  let cancel: () => void = () => {};
+  const deadline = new Promise<never>((_, reject) => {
+    cancel = () => reject(new DOMException("Request cancelled", "AbortError"));
+    timeout = setTimeout(
+      () => reject(new Error("Sign-in timed out. Please retry.")),
+      6000,
+    );
+    if (signal?.aborted) cancel();
+    else signal?.addEventListener("abort", cancel, { once: true });
+  });
+  try {
+    return await Promise.race([user.getIdToken(), deadline]);
+  } finally {
+    clearTimeout(timeout);
+    signal?.removeEventListener("abort", cancel);
+  }
+}
+function explanation(error: unknown) {
+  const name = error instanceof Error ? error.name : "";
+  if (name === "NotAllowedError")
+    return "Allow camera and microphone access in your browser, then try again.";
+  if (name === "NotFoundError")
+    return "No camera or microphone found. Connect your devices and try again.";
+  if (name === "NotReadableError")
+    return "A device is busy. Close other camera apps and try again.";
+  return error instanceof Error
+    ? error.message
+    : "Unable to connect. Please try again.";
+}
 export function useChatSession() {
   const { user, loading: authLoading } = useAuth();
-
   const [socket, setSocket] = useState<Socket | null>(null);
   const socketRef = useRef<Socket | null>(null);
-  // In-memory page ownership: survives transport reconnect, not a new tab or reload.
-  const sessionIdRef = useRef<string | null>(null);
-
-  const [status, setStatus] = useState("Ready to connect.");
-
+  const call = useRef<Call | null>(null);
   const [roomId, setRoomId] = useState<string | null>(null);
-  const roomIdRef = useRef<string | null>(null);
-
-  const [localStream, setLocalStream] = useState<MediaStream | null>(null);
-  const localStreamRef = useRef<MediaStream | null>(null);
-
-  const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
-  const remoteStreamRef = useRef<MediaStream | null>(null);
-
-  const peerConnectionRef = useRef<RTCPeerConnection | null>(null);
-  const pendingCandidates = useRef<RTCIceCandidateInit[]>([]);
-  const dataChannelRef = useRef<RTCDataChannel | null>(null);
-  // Dedupes concurrent camera requests (entry preview + Start pressed while
-  // the permission prompt is still open must not open the camera twice).
-  const cameraPromiseRef = useRef<Promise<MediaStream> | null>(null);
-  const connectionTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-  const disconnectTimerRef = useRef<NodeJS.Timeout | null>(null);
-  const isInitiatorRef = useRef(false);
-  const resumeFallbackTimerRef = useRef<NodeJS.Timeout | null>(null);
-  const iceRestartTimerRef = useRef<NodeJS.Timeout | null>(null);
-
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
-  // Reconnect banners rendered over live video (the status overlay only
-  // renders when there is no remote stream, so it can't cover these cases).
+  const [viewVersion, setViewVersion] = useState(0);
+  const [safetyTarget, setSafetyTarget] = useState<Match | null>(null);
+  const [searching, setSearching] = useState(false);
+  const wantsSearch = useRef(false);
+  const [status, setStatus] = useState(
+    "Check your camera, then meet someone from campus.",
+  );
+  const [isError, setIsError] = useState(false);
+  const [isConnecting, setIsConnecting] = useState(false);
+  const [signalingReady, setSignalingReady] = useState(false);
+  const [peerReady, setPeerReady] = useState(false);
+  const [mediaReady, setMediaReady] = useState(false);
+  const remoteSource = useRef<MediaStream | null>(null);
+  const [channelReady, setChannelReady] = useState(false);
   const [partnerAway, setPartnerAway] = useState(false);
   const [selfReconnecting, setSelfReconnecting] = useState(false);
+  const [localStream, setLocalStream] = useState<MediaStream | null>(null);
+  const local = useRef<MediaStream | null>(null);
+  const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
+  const channel = useRef<RTCDataChannel | null>(null);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [chatInput, setChatInput] = useState("");
-  const [isConnecting, setIsConnecting] = useState(false);
-  const searchAttemptRef = useRef(0);
-  const reportTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // True while WE are stopping tracks on purpose (cleanup/report/cancel) so
-  // track.onended doesn't mistake our own stop for a camera unplugging.
-  const intentionalStopRef = useRef(false);
-  // True whenever `status` describes a failure rather than progress — lets the UI
-  // suppress the "connecting" spinner on error states without parsing status text.
-  const [isError, setIsError] = useState(false);
-
-  const iceConfigRef = useRef<RTCConfiguration>({
-    iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
-  });
-
-  // Keep socket ref synchronized with state
-  useEffect(() => {
-    socketRef.current = socket;
-  }, [socket]);
-
-  // Keep local stream ref synchronized with state
-  useEffect(() => {
-    localStreamRef.current = localStream;
-  }, [localStream]);
-
-  // Keep remote stream ref synchronized with state
-  useEffect(() => {
-    remoteStreamRef.current = remoteStream;
-  }, [remoteStream]);
-
-  // ----------------------------------------
-  // WEBRTC CLEANUP
-  // ----------------------------------------
-
-  const clearPeerConnection = useCallback(() => {
-    if (connectionTimeoutRef.current) {
-      clearTimeout(connectionTimeoutRef.current);
-      connectionTimeoutRef.current = null;
-    }
-
-    if (disconnectTimerRef.current) {
-      clearTimeout(disconnectTimerRef.current);
-      disconnectTimerRef.current = null;
-    }
-
-    if (iceRestartTimerRef.current) {
-      clearTimeout(iceRestartTimerRef.current);
-      iceRestartTimerRef.current = null;
-    }
-
-    isInitiatorRef.current = false;
-    setPartnerAway(false);
-    setSelfReconnecting(false);
-
-    peerConnectionRef.current?.close();
-    peerConnectionRef.current = null;
-
-    dataChannelRef.current = null;
-    pendingCandidates.current = [];
-  }, []);
-
-  // The call died but the socket is still alive: tell the server we left the
-  // room (so the partner is notified and the room is freed), then show an
-  // error state. Shared by every "call lost" path.
-  const handleCallLost = useCallback(
-    (message: string) => {
-      if (!roomIdRef.current) return;
-
-      socketRef.current?.emit("leave_room", { roomId: roomIdRef.current });
-      clearPeerConnection();
-
-      setIsError(true);
-      setStatus(message);
-      setRemoteStream(null);
-      remoteStreamRef.current = null;
-      setRoomId(null);
-      roomIdRef.current = null;
-    },
-    [clearPeerConnection],
-  );
-
-  // One ICE restart attempt, initiator side only: renegotiates with fresh
-  // candidates over the existing peer connection and room.
-  const restartIceOffer = useCallback(async () => {
-    const pc = peerConnectionRef.current;
-    const activeSocket = socketRef.current;
-    const activeRoomId = roomIdRef.current;
-    if (!pc || !activeSocket?.connected || !activeRoomId) return;
-    if (!isInitiatorRef.current) return;
-    if (pc.signalingState !== "stable") return;
-    try {
-      debugLog("🧊 Attempting ICE restart");
-      pc.restartIce();
-      const offer = await pc.createOffer({ iceRestart: true });
-      await pc.setLocalDescription(offer);
-      activeSocket.emit("webrtc_offer", {
-        offer: pc.localDescription,
-        roomId: activeRoomId,
-      });
-    } catch (error) {
-      debugLog("ICE restart offer failed:", error);
-    }
-  }, []);
-
-  // Hard ICE failure, or a blip that outlived the grace period: try one ICE
-  // restart (initiator offers, responder asks the initiator via the server)
-  // before declaring the call lost.
-  const attemptIceRecovery = useCallback(
-    (pc: RTCPeerConnection | null) => {
-      if (!pc || peerConnectionRef.current !== pc) return;
-      if (!socketRef.current?.connected) {
-        handleCallLost("Connection lost. Click Next for someone new.");
-        return;
-      }
-      setStatus("Connection unstable... trying to recover.");
-      if (isInitiatorRef.current) {
-        void restartIceOffer();
-      } else {
-        socketRef.current.emit("webrtc_restart_request", {
-          roomId: roomIdRef.current,
-        });
-      }
-      if (!iceRestartTimerRef.current) {
-        iceRestartTimerRef.current = setTimeout(() => {
-          iceRestartTimerRef.current = null;
-          if (
-            peerConnectionRef.current === pc &&
-            pc.connectionState !== "connected"
-          ) {
-            handleCallLost("Connection lost. Click Next for someone new.");
-          }
-        }, ICE_RESTART_GRACE_MS);
-      }
-    },
-    [handleCallLost, restartIceOffer],
-  );
-
-  // Tears down socket + peer connection but keeps the camera and its
-  // preview alive, so stopping a search (or a failed attempt) doesn't
-  // black out the user's own video.
-  const teardownCall = useCallback(() => {
-    searchAttemptRef.current += 1;
-    if (reportTimerRef.current) {
-      clearTimeout(reportTimerRef.current);
-      reportTimerRef.current = null;
-    }
-    setIsConnecting(false);
-    const currentSocket = socketRef.current;
-
-    if (currentSocket) {
-      if (roomIdRef.current) {
-        currentSocket.emit("leave_room", {
-          roomId: roomIdRef.current,
-        });
-      }
-
-      currentSocket.disconnect();
-    }
-
-    clearPeerConnection();
-
-    setSocket(null);
-    socketRef.current = null;
-
-    setRemoteStream(null);
-    remoteStreamRef.current = null;
-
-    setRoomId(null);
-    roomIdRef.current = null;
-
-    setMessages([]);
-  }, [clearPeerConnection]);
-
-  // Full teardown — also turns the camera off. Used when leaving the chat
-  // entirely (unmount, settings, report) or when the account is banned.
-  const cleanupConnection = useCallback(() => {
-    teardownCall();
-
-    intentionalStopRef.current = true;
-    localStreamRef.current?.getTracks().forEach((track) => {
-      track.stop();
-    });
-
-    setLocalStream(null);
-    localStreamRef.current = null;
-  }, [teardownCall]);
-
-  // ----------------------------------------
-  // CONNECTION PHASE (derived)
-  // ----------------------------------------
-  // A single source of truth for "what's happening right now" so the UI
-  // never has to guess by pattern-matching the human-readable `status` text.
-  const connectionPhase: ConnectionPhase = (() => {
-    if (remoteStream) return "live";
-    if (socket && roomId) return "negotiating";
-    if (socket) return "waiting";
-    if (isConnecting) return "connecting";
-    return "idle";
-  })();
-
-  // Cleanup when component unmounts
-  useEffect(() => {
-    return cleanupConnection;
-  }, [cleanupConnection]);
-
-  // ----------------------------------------
-  // TURN CONFIGURATION
-  // ----------------------------------------
-
-  const prefetchIceConfig = useCallback(async () => {
-    try {
-      const isLocal =
-        typeof window !== "undefined" &&
-        (window.location.hostname === "localhost" ||
-          window.location.hostname === "127.0.0.1");
-
-      const url = isLocal
-        ? `${process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:5000"}/api/turn-credentials`
-        : "/api/backend/turn-credentials";
-
-      const headers: Record<string, string> = {};
-      if (user) {
-        try {
-          const token = await user.getIdToken();
-          headers["Authorization"] = `Bearer ${token}`;
-        } catch (e) {
-          debugLog("Could not get auth token for TURN credentials:", e);
-        }
-      }
-
-      const response = await fetch(url, { headers });
-
-      const turnData = await response.json();
-
-      if (
-        turnData.iceServers &&
-        Array.isArray(turnData.iceServers)
-      ) {
-        iceConfigRef.current = {
-          iceServers: [
-            {
-              urls: "stun:stun.l.google.com:19302",
-            },
-            {
-              urls: "stun:stun1.l.google.com:19302",
-            },
-            ...turnData.iceServers,
-          ],
-        };
-
-        return;
-      }
-
-      if (turnData.username && turnData.credential) {
-        iceConfigRef.current = {
-          iceServers: [
-            {
-              urls: "stun:stun.l.google.com:19302",
-            },
-            {
-              urls: "stun:stun1.l.google.com:19302",
-            },
-            {
-              urls: "turn:global.relay.metered.ca:80",
-              username: turnData.username,
-              credential: turnData.credential,
-            },
-            {
-              urls: "turn:global.relay.metered.ca:443",
-              username: turnData.username,
-              credential: turnData.credential,
-            },
-            {
-              urls: "turn:global.relay.metered.ca:443?transport=tcp",
-              username: turnData.username,
-              credential: turnData.credential,
-            },
-          ],
-        };
-      }
-    } catch (error) {
-      debugLog(
-        "Could not fetch TURN credentials, falling back to STUN only.",
-        error,
-      );
-    }
-    // `user` must be a dependency: with [] the callback captured the initial
-    // null user, so TURN credentials were requested without a token (401) and
-    // every call silently fell back to STUN only.
-  }, [user]);
-
-  // ----------------------------------------
-  // DATA CHANNEL
-  // ----------------------------------------
-
-  const setupDataChannel = useCallback(
-    (channel: RTCDataChannel) => {
-      dataChannelRef.current = channel;
-
-      channel.onopen = () => {
-        debugLog("Data channel opened successfully.");
-      };
-
-      channel.onmessage = (event) => {
-        // The peer is untrusted: accept only plain strings and cap their size.
-        if (typeof event.data !== "string") return;
-        const text = event.data.slice(0, MAX_MESSAGE_LENGTH);
-        if (!text.trim()) return;
-
-        setMessages((prev) => [
-          ...prev,
-          {
-            sender: "stranger",
-            text,
-          },
-        ]);
-      };
-
-      channel.onclose = () => {
-        if (dataChannelRef.current === channel) {
-          dataChannelRef.current = null;
-        }
-      };
-    },
+  const [audioEnabled, setAudioEnabled] = useState(true);
+  const [videoEnabled, setVideoEnabled] = useState(true);
+  const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
+  const owner = useRef(0);
+  const mounted = useRef(true);
+  const acquisition = useRef<{
+    generation: number;
+    promise: Promise<MediaStream>;
+  } | null>(null);
+  const abort = useRef<AbortController | null>(null);
+  const resumeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const retryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pageSession = useRef("");
+  const operation = useRef(false);
+  const pendingSafety = useRef<{
+    event: string;
+    packet: Match & { requestId: string; reason: string };
+  } | null>(null);
+  const [safetyPending, setSafetyPending] = useState(false);
+  const safetyTransport = useRef<Socket | null>(null);
+  const safetyBusy = useRef<string | null>(null);
+  const [safetyRetry, setSafetyRetry] = useState(false);
+  const [devicePending, setDevicePending] = useState(false);
+  const [cameraPending, setCameraPending] = useState(false);
+  const searchVersion = useRef(0);
+  const deviceOperation = useRef(false);
+  const ice = useRef(baseIce);
+  const iceMode = useRef("all");
+  const timings = useRef<{
+    started?: number;
+    media?: number;
+    credentials?: number;
+    search?: number;
+    playback?: number;
+    matched?: number;
+    connected?: number;
+  }>({});
+  const append = useCallback(
+    (sender: ChatMessage["sender"], text: string) =>
+      setMessages((prev) => [
+        ...prev.slice(-199),
+        { id: crypto.randomUUID(), sender, text },
+      ]),
     [],
   );
-
-  // ----------------------------------------
-  // WEBRTC PEER CONNECTION
-  // ----------------------------------------
-
-  const createPeerConnection = useCallback(
-    (
-      activeSocket: Socket,
-      matchedRoomId: string,
-      stream: MediaStream,
-    ) => {
-      clearPeerConnection();
-
-      const pc = new RTCPeerConnection(
-        iceConfigRef.current,
-      );
-
-      peerConnectionRef.current = pc;
-
-      stream
-        .getTracks()
-        .forEach((track) => {
-          pc.addTrack(track, stream);
-        });
-
-      pc.ontrack = (event) => {
-        const [stream] = event.streams;
-
-        if (stream) {
-          setRemoteStream(stream);
-          remoteStreamRef.current = stream;
-        }
-      };
-
-      pc.onicecandidate = (event) => {
-        if (event.candidate) {
-          activeSocket.emit(
-            "webrtc_ice_candidate",
-            {
-              candidate: event.candidate,
-              roomId: matchedRoomId,
-            },
-          );
-        }
-      };
-
-      pc.onconnectionstatechange = () => {
-        debugLog("📡 WebRTC Connection State:", pc.connectionState);
-        // If roomId was already cleared (block/skip/disconnect happened),
-        // ignore any further state changes from this closing PC.
-        if (!roomIdRef.current) return;
-
-        if (pc.connectionState === "connected") {
-          if (connectionTimeoutRef.current) {
-            clearTimeout(connectionTimeoutRef.current);
-            connectionTimeoutRef.current = null;
-          }
-          setIsError(false);
-          setStatus("Connected! Video active.");
-          if (disconnectTimerRef.current) {
-            clearTimeout(disconnectTimerRef.current);
-            disconnectTimerRef.current = null;
-          }
-          if (iceRestartTimerRef.current) {
-            clearTimeout(iceRestartTimerRef.current);
-            iceRestartTimerRef.current = null;
-          }
-        } else if (pc.connectionState === "disconnected") {
-          setStatus("Connection unstable... trying to recover.");
-          if (!disconnectTimerRef.current) {
-            disconnectTimerRef.current = setTimeout(() => {
-              disconnectTimerRef.current = null;
-              if (
-                peerConnectionRef.current === pc &&
-                pc.connectionState !== "connected"
-              ) {
-                attemptIceRecovery(pc);
-              }
-            }, DISCONNECT_GRACE_MS);
-          }
-        } else if (pc.connectionState === "failed") {
-          attemptIceRecovery(pc);
-        } else if (pc.connectionState === "closed") {
-          handleCallLost("Stranger disconnected. Click Next for someone new.");
-        }
-      };
-
-      pc.oniceconnectionstatechange = () => {
-        debugLog("🧊 WebRTC ICE State:", pc.iceConnectionState);
-        if (!roomIdRef.current) return;
-
-        // Transient "disconnected" is handled with a grace period in
-        // onconnectionstatechange above. A hard failure gets one ICE
-        // restart attempt before the call is declared lost.
-        if (pc.iceConnectionState === "failed") {
-          attemptIceRecovery(pc);
-        }
-      };
-
-      return pc;
-    },
-    [clearPeerConnection, handleCallLost, attemptIceRecovery],
+  const owns = useCallback(
+    (c: Call) => mounted.current && call.current === c,
+    [],
   );
-
-  // ----------------------------------------
-  // RESET FOR NEXT MATCH
-  // ----------------------------------------
-
-  const resetForNextMatch = useCallback(() => {
-    clearPeerConnection();
-
-    const currentSocket = socketRef.current;
-
-    if (currentSocket && roomIdRef.current) {
-      currentSocket.emit("leave_room", {
-        roomId: roomIdRef.current,
-      });
+  const clearPeer = useCallback(() => {
+    setViewVersion((version) => version + 1);
+    wantsSearch.current = false;
+    setSearching(false);
+    const old = call.current;
+    call.current = null;
+    if (old) {
+      clearTimeout(old.timer);
+      clearTimeout(old.recovery);
+      clearTimeout(old.disconnect);
+      old.pc.ontrack = null;
+      old.pc.onicecandidate = null;
+      old.pc.onconnectionstatechange = null;
+      old.pc.oniceconnectionstatechange = null;
+      old.pc.close();
     }
-
+    if (resumeTimer.current) clearTimeout(resumeTimer.current);
+    resumeTimer.current = null;
+    channel.current?.close();
+    channel.current = null;
+    setChannelReady(false);
+    setPeerReady(false);
+    setMediaReady(false);
+    remoteSource.current = null;
     setRemoteStream(null);
-    remoteStreamRef.current = null;
-
     setRoomId(null);
-    roomIdRef.current = null;
-
-    setMessages([
-      {
-        sender: "system",
-        text: "Looking for a new stranger...",
-      },
-    ]);
-  }, [clearPeerConnection]);
-
-  // ----------------------------------------
-  // SOCKET EVENT HANDLERS
-  // ----------------------------------------
-
-  const registerSocketHandlers = useCallback(
-    (
-      newSocket: Socket,
-      stream: MediaStream,
-    ) => {
-      // ------------------------------------
-      // SOCKET CONNECTED
-      // ------------------------------------
-
-      newSocket.on("connect", () => {
-        debugLog(
-          "🔌 Socket connected:",
-          newSocket.id,
+    setPartnerAway(false);
+    setSelfReconnecting(false);
+  }, []);
+  const leave = useCallback((c: Call | null) => {
+    if (c && socketRef.current?.connected)
+      socketRef.current.emit("leave_room", {
+        roomId: c.roomId,
+        sessionNonce: c.sessionNonce,
+      });
+  }, []);
+  const endCall = useCallback(
+    (message: string) => {
+      const c = call.current;
+      if (c)
+        setSafetyTarget({ roomId: c.roomId, sessionNonce: c.sessionNonce });
+      leave(c);
+      clearPeer();
+      setStatus(message);
+      setIsError(true);
+    },
+    [leave, clearPeer],
+  );
+  const cleanupConnection = useCallback(() => {
+    safetyTransport.current?.removeAllListeners();
+    safetyTransport.current?.disconnect();
+    safetyTransport.current = null;
+    safetyBusy.current = null;
+    owner.current++;
+    abort.current?.abort();
+    abort.current = null;
+    setSafetyTarget(null);
+    searchVersion.current++;
+    setCameraPending(false);
+    if (retryTimer.current) clearTimeout(retryTimer.current);
+    retryTimer.current = null;
+    leave(call.current);
+    if (pendingSafety.current && socketRef.current?.connected)
+      socketRef.current.emit("leave_room", pendingSafety.current.packet);
+    const s = socketRef.current;
+    socketRef.current = null;
+    if (s) {
+      if (s.connected) s.emit("stop_search");
+      s.removeAllListeners();
+      s.disconnect();
+    }
+    clearPeer();
+    setSocket(null);
+    setSignalingReady(false);
+    setIsConnecting(false);
+    local.current?.getTracks().forEach((track) => track.stop());
+    local.current = null;
+    setLocalStream(null);
+    operation.current = false;
+  }, [leave, clearPeer]);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      cleanupConnection();
+    };
+  }, [cleanupConnection]);
+  useEffect(() => {
+    if (!safetyTarget) return;
+    const timer = setTimeout(() => setSafetyTarget(null), 300000);
+    return () => clearTimeout(timer);
+  }, [safetyTarget]);
+  const refreshDevices = useCallback(async () => {
+    if (navigator.mediaDevices?.enumerateDevices) {
+      const list = await navigator.mediaDevices.enumerateDevices();
+      if (mounted.current) setDevices(list);
+    }
+  }, []);
+  useEffect(() => {
+    const media = navigator.mediaDevices;
+    if (!media) return;
+    const update = () => {
+      void refreshDevices().catch(() => {});
+    };
+    media.addEventListener("devicechange", update);
+    return () => media.removeEventListener("devicechange", update);
+  }, [refreshDevices]);
+  const acquire = useCallback(async () => {
+    if (local.current?.getTracks().some((t) => t.readyState === "live"))
+      return local.current;
+    const generation = owner.current;
+    if (acquisition.current?.generation === generation)
+      return acquisition.current.promise;
+    if (!navigator.mediaDevices?.getUserMedia)
+      throw new Error(
+        "Camera access needs a secure HTTPS connection and a supported browser.",
+      );
+    setCameraPending(true);
+    const promise = navigator.mediaDevices
+      .getUserMedia(constraints)
+      .then((stream) => {
+        if (!mounted.current || owner.current !== generation) {
+          stream.getTracks().forEach((t) => t.stop());
+          throw new DOMException("Capture cancelled", "AbortError");
+        }
+        local.current = stream;
+        setLocalStream(stream);
+        setAudioEnabled(true);
+        setVideoEnabled(true);
+        stream.getTracks().forEach((track) => {
+          track.onended = () => {
+            if (!local.current?.getTracks().includes(track)) return;
+            setStatus(
+              `${track.kind === "audio" ? "Microphone" : "Camera"} disconnected. Choose another device in Devices.`,
+            );
+            setIsError(true);
+            if (track.kind === "audio") setAudioEnabled(false);
+            else setVideoEnabled(false);
+          };
+        });
+        void refreshDevices().catch(() => {});
+        return stream;
+      })
+      .finally(() => {
+        if (acquisition.current?.promise === promise)
+          acquisition.current = null;
+        if (mounted.current && owner.current === generation)
+          setCameraPending(false);
+      });
+    acquisition.current = { generation, promise };
+    return promise;
+  }, [refreshDevices]);
+  const prepareCamera = useCallback(async () => {
+    setIsError(false);
+    try {
+      await acquire();
+    } catch (error) {
+      if (
+        mounted.current &&
+        !(error instanceof DOMException && error.name === "AbortError")
+      ) {
+        setStatus(explanation(error));
+        setIsError(true);
+      }
+    }
+  }, [acquire]);
+  const configureIce = useCallback(
+    async (generation: number) => {
+      const mode = diagnosticsEnabled
+        ? new URLSearchParams(location.search).get("ice")
+        : "all";
+      iceMode.current = ["host", "stun", "relay"].includes(mode || "")
+        ? mode!
+        : "all";
+      if (mode === "host" || mode === "stun") {
+        ice.current = {
+          ...baseIce,
+          iceServers: mode === "host" ? [] : baseIce.iceServers,
+        };
+        return;
+      }
+      const controller = new AbortController();
+      abort.current = controller;
+      const timeout = setTimeout(() => controller.abort(), 6000);
+      try {
+        const token = await getToken(user!, controller.signal);
+        if (owner.current !== generation)
+          throw new DOMException("Cancelled", "AbortError");
+        const response = await fetch(api("turn-credentials"), {
+          headers: { Authorization: `Bearer ${token}` },
+          signal: controller.signal,
+          cache: "no-store",
+        });
+        if (!response.ok)
+          throw new Error(
+            response.status === 401 || response.status === 403
+              ? "Your account cannot start a call. Sign in again or contact support."
+              : "Relay service unavailable. Please retry shortly.",
+          );
+        const data = await response.json();
+        if (
+          !Array.isArray(data.iceServers) ||
+          !data.iceServers.length ||
+          !data.iceServers.every(
+            (s: RTCIceServer) =>
+              s && (typeof s.urls === "string" || Array.isArray(s.urls)),
+          )
+        )
+          throw new Error(
+            "The connection service returned an invalid configuration.",
+          );
+        if (owner.current === generation)
+          ice.current = {
+            ...baseIce,
+            iceTransportPolicy: mode === "relay" ? "relay" : "all",
+            iceServers: [...baseIce.iceServers!, ...data.iceServers],
+          };
+      } finally {
+        clearTimeout(timeout);
+        if (abort.current === controller) abort.current = null;
+      }
+    },
+    [user],
+  );
+  const setupChannel = useCallback(
+    (c: Call, dc: RTCDataChannel) => {
+      if (!owns(c)) {
+        dc.close();
+        return;
+      }
+      channel.current = dc;
+      let received = 0,
+        windowStart = Date.now();
+      dc.onopen = () => {
+        if (owns(c) && channel.current === dc) setChannelReady(true);
+      };
+      dc.onclose = dc.onerror = () => {
+        if (owns(c) && channel.current === dc) setChannelReady(false);
+      };
+      dc.onmessage = (e) => {
+        if (!owns(c) || typeof e.data !== "string" || e.data.length > 1000)
+          return;
+        if (Date.now() - windowStart > 3000) {
+          received = 0;
+          windowStart = Date.now();
+        }
+        if (++received > 15) return;
+        const text = e.data.trim();
+        if (text) append("stranger", text);
+      };
+    },
+    [owns, append],
+  );
+  const emitSignal = useCallback(
+    (c: Call, event: string, extra: object = {}) => {
+      if (owns(c) && socketRef.current?.connected)
+        socketRef.current.emit(event, {
+          roomId: c.roomId,
+          sessionNonce: c.sessionNonce,
+          negotiationId: c.epoch,
+          ...extra,
+        });
+    },
+    [owns],
+  );
+  const offer = useCallback(
+    async (c: Call, restart = false) => {
+      if (
+        !owns(c) ||
+        !c.initiator ||
+        c.pc.signalingState !== "stable" ||
+        !socketRef.current?.connected
+      )
+        return;
+      try {
+        if (restart) c.epoch++;
+        const description = await c.pc.createOffer(
+          restart ? { iceRestart: true } : {},
         );
-
+        if (!owns(c)) return;
+        await c.pc.setLocalDescription(description);
+        if (owns(c))
+          emitSignal(c, "webrtc_offer", { offer: c.pc.localDescription });
+      } catch {
+        if (owns(c))
+          endCall("Call setup failed. Choose Next to try someone else.");
+      }
+    },
+    [owns, emitSignal, endCall],
+  );
+  const recover = useCallback(
+    (c: Call) => {
+      if (!owns(c) || c.restarting) return;
+      if (!socketRef.current?.connected) return; // Keep media during the transport's bounded reconnect window.
+      c.restarting = true;
+      setStatus("Connection interrupted. Trying to reconnect…");
+      setPeerReady(false);
+      c.recovery = setTimeout(() => {
+        if (!owns(c)) return;
+        if (c.pc.connectionState !== "connected")
+          endCall(
+            "Could not restore this call. Choose Next to meet someone else.",
+          );
+        else {
+          c.restarting = false;
+          c.recovery = undefined;
+          setPeerReady(true);
+          setStatus("Connected to another student.");
+        }
+      }, 10000);
+      if (c.initiator) void offer(c, true);
+      else emitSignal(c, "webrtc_restart_request");
+    },
+    [owns, offer, emitSignal, endCall],
+  );
+  const find = useCallback((s: Socket) => {
+    if (!s.connected) return;
+    const version = ++searchVersion.current;
+    wantsSearch.current = true;
+    setSearching(true);
+    timings.current.search = performance.now();
+    setStatus("Looking for another student…");
+    setIsError(false);
+    s.timeout(8000).emit(
+      "find_match",
+      { requestId: crypto.randomUUID() },
+      (error: Error | null, result?: { ok: boolean; message?: string }) => {
+        if (
+          socketRef.current !== s ||
+          call.current ||
+          searchVersion.current !== version
+        )
+          return;
+        if (error || !result?.ok) {
+          wantsSearch.current = false;
+          setSearching(false);
+          setStatus(
+            result?.message || "Search did not start. Choose Next to retry.",
+          );
+          setIsError(true);
+        }
+      },
+    );
+  }, []);
+  const start = useCallback(async () => {
+    if (
+      !user ||
+      authLoading ||
+      operation.current ||
+      pendingSafety.current ||
+      (socketRef.current && (!socketRef.current.connected || call.current))
+    )
+      return;
+    setSafetyTarget(null);
+    const existingSocket = socketRef.current;
+    operation.current = true;
+    const generation = owner.current;
+    setIsConnecting(true);
+    setIsError(false);
+    setStatus("Preparing your devices and connection…");
+    timings.current = { started: performance.now() };
+    try {
+      await acquire();
+      timings.current.media = performance.now();
+      if (owner.current !== generation) return;
+      await configureIce(generation);
+      timings.current.credentials = performance.now();
+      if (owner.current !== generation) return;
+      if (existingSocket) {
+        if (socketRef.current !== existingSocket) return;
+        if (existingSocket.connected) find(existingSocket);
+        else {
+          wantsSearch.current = true;
+          setStatus("Reconnecting before searching…");
+        }
         setIsConnecting(false);
-
-        // Mid-call reconnect: the media path is peer-to-peer and may still
-        // be alive, and the server holds the room for a grace period. Hold
-        // the call and wait for the server's resume verdict instead of
-        // tearing everything down.
-        if (roomIdRef.current) {
-          setStatus("Reconnecting...");
-          if (resumeFallbackTimerRef.current) {
-            clearTimeout(resumeFallbackTimerRef.current);
+        return;
+      }
+      if (!pageSession.current) pageSession.current = crypto.randomUUID();
+      const s = io(origin(), {
+        autoConnect: false,
+        reconnectionAttempts: 6,
+        reconnectionDelay: 1000,
+        reconnectionDelayMax: 4000,
+        timeout: 8000,
+        auth: async (callback) => {
+          try {
+            const token = await getToken(user);
+            if (owner.current === generation)
+              callback({
+                token,
+                sessionId: pageSession.current,
+                protocolVersion: 2,
+              });
+          } catch {
+            callback({});
           }
-          resumeFallbackTimerRef.current = setTimeout(() => {
-            resumeFallbackTimerRef.current = null;
-            if (!roomIdRef.current) return;
-            clearPeerConnection();
-            setRemoteStream(null);
-            remoteStreamRef.current = null;
-            setRoomId(null);
-            roomIdRef.current = null;
-            setStatus("Finding someone for you...");
-            setMessages([
-              { sender: "system", text: "Waiting for a stranger..." },
-            ]);
-            newSocket.emit("find_match");
-          }, RESUME_FALLBACK_MS);
+        },
+      });
+      socketRef.current = s;
+      setSocket(s);
+      let connectedOnce = false,
+        serviceRetries = 0;
+      s.on("connect", () => {
+        if (socketRef.current !== s) return;
+        setSignalingReady(true);
+        setIsConnecting(false);
+        setSelfReconnecting(false);
+        if (!connectedOnce) {
+          connectedOnce = true;
+          find(s);
+        } else if (call.current) {
+          const captured = call.current;
+          resumeTimer.current = setTimeout(() => {
+            if (owns(captured)) {
+              endCall("The previous call could not resume. Choose Next.");
+            }
+          }, 5000);
+        } else if (wantsSearch.current) find(s);
+        else setStatus("Connected to the service. Choose Next for a new call.");
+      });
+      s.on("disconnect", (reason: string) => {
+        if (socketRef.current !== s) return;
+        if (reason === "io server disconnect") {
+          cleanupConnection();
+          setStatus(
+            "The call service closed this connection. Try again when it is available.",
+          );
+          setIsError(true);
           return;
         }
-
-        setIsError(false);
-
-        // On an automatic reconnect the server has already dropped our old
-        // room, so discard the stale peer connection before searching again.
-        clearPeerConnection();
-        setRemoteStream(null);
-        remoteStreamRef.current = null;
-        setRoomId(null);
-        roomIdRef.current = null;
-
-        setStatus(
-          "Finding someone for you...",
-        );
-
-        setMessages([
-          { sender: "system", text: "Waiting for a stranger..." },
-        ]);
-
-        // Identity now comes from the
-        // authenticated Firebase socket.
-        newSocket.emit("find_match");
+        setSignalingReady(false);
+        setSelfReconnecting(true);
+        setStatus("Signaling interrupted. Reconnecting…");
       });
-      const handleUserBlocked = () => {
-        debugLog("🛑 user_blocked ack received — entering matchmaking queue");
-        // State was already reset optimistically in block(); just re-enter the queue
-        newSocket.emit("find_match");
-      };
-
-      newSocket.on(
-        "user_blocked",
-        handleUserBlocked
-      );
-
-      // Block could not be saved server-side; keep the user searching rather
-      // than stuck on the optimistic "User blocked" screen.
-      newSocket.on("block_failed", () => {
-        setIsError(true);
-        setStatus("Couldn't block that user. Looking for someone new...");
-        newSocket.emit("find_match");
-      });
-
-      // Server could not start a search (e.g. database hiccup).
-      newSocket.on("match_error", (data?: { message?: string }) => {
-        setIsError(true);
-        setStatus(data?.message || "Could not start searching. Please try again.");
-        teardownCall();
-      });
-
-      newSocket.on("chat_rate_limited", () => {
-        setMessages((prev) => [
-          ...prev,
-          { sender: "system", text: "You're sending messages too fast." },
-        ]);
-      });
-
-      // Unexpected drops (server restart, network loss). socket.io retries
-      // on its own; tell the user instead of freezing on a dead call.
-      newSocket.on("disconnect", (reason) => {
-        if (reason === "io client disconnect") return;
-        // Signaling dropped. If we are mid-call, the media path is
-        // peer-to-peer and may still be alive — hold everything while
-        // socket.io reconnects; the resume verdict decides what survives.
-        setIsError(true);
-        setStatus("Connection to the server was lost. Reconnecting...");
-        if (roomIdRef.current) setSelfReconnecting(true);
-      });
-
-      // ------------------------------------
-      // SOCKET CONNECT ERROR
-      // ------------------------------------
-
-      newSocket.on("connect_error", (error) => {
-        console.error("❌ SOCKET CONNECTION FAILED");
-        console.error("message:", error.message);
-        //console.error("description:", error.description);
-        //console.error("context:", error.context);
-        console.error("error:", error);
-
-        setIsConnecting(false);
-        setIsError(true);
-        setStatus("Couldn't reach the server. Check your connection and try again.");
-
-        // The socket never actually connected — tear it down so the UI
-        // doesn't get stuck believing it's still "waiting" on a dead socket.
-        // The camera preview stays on so retrying is instant.
-        teardownCall();
-      });
-
-      // ------------------------------------
-      // BANNED USER
-      // ------------------------------------
-
-      newSocket.on("banned_alert", (data) => {
-        setIsError(true);
-        setStatus(
-          `🚨 ${data.message}`,
-        );
-
-        cleanupConnection();
-      });
-
-      // ------------------------------------
-      // COOLDOWN ACTIVE
-      // ------------------------------------
-
-      newSocket.on("cooldown_active", (data?: { remaining?: number }) => {
-        setIsError(true);
-        setStatus(
-          data?.remaining
-            ? `⏳ On cooldown for content violations. Try again in ${data.remaining}s.`
-            : "⏳ Temporarily on cooldown for content violations."
-        );
-        setIsConnecting(false);
-        teardownCall();
-      });
-
-      // ------------------------------------
-      // MATCH FOUND
-      // ------------------------------------
-
-      newSocket.on(
-        "match_found",
-        async (data) => {
-
-          debugLog(
-            "🔥 MATCH_FOUND RECEIVED:",
-            data
-          );
-
-          try {
-            setIsError(false);
-            setStatus(
-              "Match found! Connecting video..."
-            );
-
-            setRoomId(data.roomId);
-            roomIdRef.current = data.roomId;
-            isInitiatorRef.current = data.role === "initiator";
-
-            pendingCandidates.current = [];
-
-            // Guard: timeout if partner never finishes WebRTC negotiation
-            if (connectionTimeoutRef.current) {
-              clearTimeout(connectionTimeoutRef.current);
-            }
-            connectionTimeoutRef.current = setTimeout(() => {
-              if (!remoteStreamRef.current && peerConnectionRef.current?.connectionState !== "connected") {
-                debugLog("⏱️ WebRTC connection timeout reached");
-                // Negotiation failed — free the server-side room too so the
-                // partner isn't left waiting on a call that will never start.
-                handleCallLost("Couldn't connect to the stranger. Click Next for someone new.");
-              }
-            }, 12000);
-
-            setMessages([
-              {
-                sender: "system",
-                text:
-                  "You are now chatting with a random stranger.",
+      s.on(
+        "connect_error",
+        (error: Error & { data?: { retryable?: boolean } }) => {
+          if (socketRef.current !== s) return;
+          setIsError(true);
+          if (
+            error.data?.retryable === true &&
+            !s.active &&
+            serviceRetries++ < 6
+          ) {
+            setStatus("Connection service unavailable. Retrying; End cancels.");
+            retryTimer.current = setTimeout(
+              () => {
+                if (socketRef.current === s) s.connect();
               },
-            ]);
-
-            const currentStream =
-              localStreamRef.current || stream;
-
-            debugLog(
-              "🔥 Local stream:",
-              currentStream
+              Math.min(4000, 1000 * serviceRetries),
             );
-
-            debugLog(
-              "🔥 Creating peer connection..."
-            );
-
-            const pc = createPeerConnection(
-              newSocket,
-              data.roomId,
-              currentStream,
-            );
-
-            debugLog(
-              "🔥 Peer connection created:",
-              pc
-            );
-
-            if (data.role === "initiator") {
-              debugLog(
-                "🔥 I am the initiator"
-              );
-
-              const channel =
-                pc.createDataChannel("chat");
-
-              debugLog(
-                "🔥 Data channel created"
-              );
-
-              setupDataChannel(channel);
-
-              debugLog(
-                "🔥 Creating WebRTC offer..."
-              );
-
-              const offer =
-                await pc.createOffer();
-
-              debugLog(
-                "🔥 Setting local description..."
-              );
-
-              await pc.setLocalDescription(
-                offer
-              );
-
-              debugLog(
-                "🔥 Local description set, sending offer..."
-              );
-
-              newSocket.emit(
-                "webrtc_offer",
-                {
-                  offer,
-                  roomId: data.roomId,
-                }
-              );
-
-              debugLog(
-                "🔥 WebRTC offer emitted"
-              );
-
-            } else {
-              debugLog(
-                "🔥 I am the responder"
-              );
-
-              pc.ondatachannel = (event) => {
-                debugLog(
-                  "🔥 Data channel received"
-                );
-
-                setupDataChannel(
-                  event.channel
-                );
-              };
-            }
-
-          } catch (error) {
-            console.error(
-              "❌ MATCH / WEBRTC INITIALIZATION FAILED:",
-              error
-            );
-
-            setIsError(true);
+          } else if (error.data?.retryable === false || !s.active) {
+            cleanupConnection();
+            setStatus("Unable to sign in to calls. Reload or sign in again.");
+          } else
             setStatus(
-              "Failed to establish video connection."
+              "Connection service unavailable. Retrying; you can End at any time.",
             );
-          }
-        }
-      );
-
-      // ------------------------------------
-      // SESSION RESUME (after a signaling blip mid-call)
-      // ------------------------------------
-
-      // Server's verdict after a mid-call reconnect.
-      newSocket.on(
-        "session_resume_result",
-        (data?: { resumed?: boolean; roomId?: string }) => {
-          if (resumeFallbackTimerRef.current) {
-            clearTimeout(resumeFallbackTimerRef.current);
-            resumeFallbackTimerRef.current = null;
-          }
-          if (!roomIdRef.current) return;
-
-          if (data?.resumed && data.roomId === roomIdRef.current) {
-            setIsError(false);
-            setSelfReconnecting(false);
-            const pc = peerConnectionRef.current;
-            if (pc && pc.connectionState === "connected") {
-              setStatus("Connected! Video active.");
-            } else {
-              // Signaling is back but media needs help: one ICE restart.
-              setStatus("Reconnecting video...");
-              attemptIceRecovery(pc);
-            }
-            return;
-          }
-
-          // Room is gone: fall back to a fresh search.
-          clearPeerConnection();
-          setRemoteStream(null);
-          remoteStreamRef.current = null;
-          setRoomId(null);
-          roomIdRef.current = null;
-          setIsError(false);
-          setStatus("Finding someone for you...");
-          setMessages([
-            { sender: "system", text: "Waiting for a stranger..." },
-          ]);
-          newSocket.emit("find_match");
         },
       );
-
-      // Partner's signaling dropped; their media may still be live and the
-      // server is holding the room for them.
-      newSocket.on(
-        "partner_connection_lost",
-        (data?: { message?: string }) => {
-          if (!roomIdRef.current) return;
+      s.io.on("reconnect_failed", () => {
+        if (socketRef.current === s) {
+          cleanupConnection();
+          setStatus(
+            "Connection attempts exhausted. Check your network and try again.",
+          );
+          setIsError(true);
+        }
+      });
+      s.on("match_found", async (data: Match) => {
+        if (
+          socketRef.current !== s ||
+          !s.connected ||
+          !data?.roomId ||
+          !data.sessionNonce
+        )
+          return;
+        clearPeer();
+        const stream = local.current;
+        if (!stream) {
+          endCall("Camera unavailable. Check your devices.");
+          return;
+        }
+        const pc = new RTCPeerConnection(ice.current);
+        const c: Call = {
+          ...data,
+          pc,
+          epoch: 0,
+          initiator: data.role === "initiator",
+          candidates: new Map(),
+          restarting: false,
+          playable: false,
+        };
+        call.current = c;
+        setRoomId(c.roomId);
+        setMessages([]);
+        setChatInput("");
+        setStatus("Student found. Connecting your call…");
+        setIsError(false);
+        setSafetyTarget(data);
+        timings.current.matched = performance.now();
+        stream.getTracks().forEach((track) => pc.addTrack(track, stream));
+        pc.ontrack = (e) => {
+          if (owns(c) && e.streams[0]) {
+            remoteSource.current = e.streams[0];
+            setRemoteStream(e.streams[0]);
+            e.track.onended = () => {
+              if (owns(c))
+                setStatus(
+                  `Student’s ${e.track.kind === "audio" ? "microphone" : "camera"} stopped. Text and End remain available.`,
+                );
+            };
+          }
+        };
+        pc.onicecandidate = (e) => {
+          if (e.candidate) {
+            const fragment = c.pc.localDescription?.sdp.match(
+              /a=ice-ufrag:([^\r\n]+)/,
+            )?.[1];
+            if (
+              e.candidate.usernameFragment &&
+              fragment &&
+              e.candidate.usernameFragment !== fragment
+            )
+              return;
+            emitSignal(c, "webrtc_ice_candidate", {
+              candidate: e.candidate.toJSON(),
+            });
+          }
+        };
+        pc.ondatachannel = (e) => setupChannel(c, e.channel);
+        const update = () => {
+          if (!owns(c)) return;
+          if (pc.connectionState === "connected") {
+            if (c.playable) clearTimeout(c.timer);
+            clearTimeout(c.disconnect);
+            clearTimeout(c.recovery);
+            c.disconnect = undefined;
+            c.recovery = undefined;
+            c.restarting = false;
+            timings.current.connected ??= performance.now();
+            setPeerReady(true);
+            setIsError(false);
+            setStatus("Connected to another student.");
+          } else if (pc.connectionState === "failed") recover(c);
+          else if (pc.connectionState === "disconnected" && !c.disconnect) {
+            setPeerReady(false);
+            setStatus("Connection interrupted. Waiting for your network…");
+            c.disconnect = setTimeout(() => {
+              c.disconnect = undefined;
+              recover(c);
+            }, 5000);
+          }
+        };
+        pc.onconnectionstatechange = update;
+        pc.oniceconnectionstatechange = () => {
+          if (owns(c) && pc.iceConnectionState === "failed") recover(c);
+        };
+        c.timer = setTimeout(() => {
+          if (owns(c))
+            endCall("This call could not connect. Choose Next to try again.");
+        }, 18000);
+        if (c.initiator) {
+          setupChannel(c, pc.createDataChannel("chat"));
+          await offer(c);
+        }
+      });
+      const accept = (p: Signal) => {
+        const c = call.current;
+        return c &&
+          p &&
+          c.roomId === p.roomId &&
+          c.sessionNonce === p.sessionNonce
+          ? c
+          : null;
+      };
+      const drain = async (c: Call, epoch: number) => {
+        const list = c.candidates.get(epoch) || [];
+        c.candidates.delete(epoch);
+        for (const candidate of list) {
+          if (!owns(c) || c.epoch !== epoch) return;
+          try {
+            await c.pc.addIceCandidate(candidate);
+          } catch {
+            /* A stale ICE candidate must not end a healthy call. */
+          }
+        }
+      };
+      s.on("webrtc_offer", async (p: Signal) => {
+        const c = accept(p);
+        if (!c || c.initiator || p.negotiationId < c.epoch || !p.offer) return;
+        try {
+          c.epoch = p.negotiationId;
+          await c.pc.setRemoteDescription(p.offer);
+          if (!owns(c)) return;
+          await drain(c, c.epoch);
+          const answer = await c.pc.createAnswer();
+          if (!owns(c)) return;
+          await c.pc.setLocalDescription(answer);
+          if (owns(c))
+            emitSignal(c, "webrtc_answer", { answer: c.pc.localDescription });
+        } catch {
+          if (owns(c))
+            endCall("Call negotiation failed. Choose Next to retry.");
+        }
+      });
+      s.on("webrtc_answer", async (p: Signal) => {
+        const c = accept(p);
+        if (
+          !c ||
+          !c.initiator ||
+          c.epoch !== p.negotiationId ||
+          !p.answer ||
+          c.pc.signalingState !== "have-local-offer"
+        )
+          return;
+        try {
+          await c.pc.setRemoteDescription(p.answer);
+          if (owns(c)) await drain(c, c.epoch);
+        } catch {
+          if (owns(c))
+            endCall("Call negotiation failed. Choose Next to retry.");
+        }
+      });
+      s.on("webrtc_ice_candidate", async (p: Signal) => {
+        const c = accept(p);
+        if (
+          !c ||
+          !p.candidate ||
+          p.negotiationId < c.epoch ||
+          p.negotiationId > c.epoch + 1
+        )
+          return;
+        try {
+          if (c.pc.remoteDescription && p.negotiationId === c.epoch)
+            await c.pc.addIceCandidate(p.candidate);
+          else {
+            const list = c.candidates.get(p.negotiationId) || [];
+            if (list.length < 128) list.push(p.candidate);
+            c.candidates.set(p.negotiationId, list);
+          }
+        } catch {
+          /* Bounded candidate rejection; recovery is driven by transport state. */
+        }
+      });
+      s.on("webrtc_restart_request", (p: Signal) => {
+        const c = accept(p);
+        if (c && c.initiator) recover(c);
+      });
+      s.on("partner_connection_lost", (p: Signal) => {
+        if (accept(p)) {
           setPartnerAway(true);
           setStatus(
-            data?.message ||
-              "Stranger's connection dropped. Waiting for them to reconnect...",
+            "Student disconnected briefly. Waiting for them to return…",
           );
-        },
-      );
-
-      newSocket.on("partner_reconnected", () => {
-        if (!roomIdRef.current) return;
-        setPartnerAway(false);
-        const pc = peerConnectionRef.current;
-        if (pc && pc.connectionState === "connected") {
-          setIsError(false);
-          setStatus("Connected! Video active.");
-        } else {
-          setStatus("Reconnecting video...");
-          attemptIceRecovery(pc);
         }
       });
-
-      // The responder asked us (the initiator) to drive an ICE restart.
-      newSocket.on("webrtc_restart_request", () => {
-        void restartIceOffer();
-      });
-
-      // ------------------------------------
-      // WEBRTC OFFER
-      // ------------------------------------
-
-      newSocket.on(
-        "webrtc_offer",
-        async ({ offer }) => {
-          const pc =
-            peerConnectionRef.current;
-
-          if (
-            !pc ||
-            pc.signalingState === "closed"
-          ) {
-            return;
-          }
-
-          try {
-            await pc.setRemoteDescription(
-              new RTCSessionDescription(
-                offer,
-              ),
-            );
-
-            const answer =
-              await pc.createAnswer();
-
-            await pc.setLocalDescription(
-              answer,
-            );
-
-            newSocket.emit(
-              "webrtc_answer",
-              {
-                answer,
-                roomId:
-                  roomIdRef.current,
-              },
-            );
-
-            // Add ICE candidates that arrived
-            // before the remote description.
-            for (const candidate of
-              pendingCandidates.current) {
-              try {
-                await pc.addIceCandidate(
-                  new RTCIceCandidate(
-                    candidate,
-                  ),
-                );
-              } catch (error) {
-                debugLog(
-                  "Failed to add buffered ICE candidate after offer:",
-                  error,
-                );
-              }
-            }
-
-            pendingCandidates.current = [];
-          } catch (error) {
-            console.error(
-              "Offer processing error:",
-              error,
-            );
-          }
-        },
-      );
-
-      // ------------------------------------
-      // WEBRTC ANSWER
-      // ------------------------------------
-
-      newSocket.on(
-        "webrtc_answer",
-        async ({ answer }) => {
-          const pc =
-            peerConnectionRef.current;
-
-          if (
-            !pc ||
-            pc.signalingState ===
-            "closed" ||
-            pc.signalingState ===
-            "stable"
-          ) {
-            return;
-          }
-
-          try {
-            await pc.setRemoteDescription(
-              new RTCSessionDescription(
-                answer,
-              ),
-            );
-
-            for (const candidate of
-              pendingCandidates.current) {
-              try {
-                await pc.addIceCandidate(
-                  new RTCIceCandidate(
-                    candidate,
-                  ),
-                );
-              } catch (error) {
-                debugLog(
-                  "Failed to add buffered ICE candidate after answer:",
-                  error,
-                );
-              }
-            }
-
-            pendingCandidates.current = [];
-          } catch (error) {
-            console.error(
-              "Answer processing error:",
-              error,
-            );
-          }
-        },
-      );
-
-      // ------------------------------------
-      // WEBRTC ICE CANDIDATE
-      // ------------------------------------
-
-      newSocket.on(
-        "webrtc_ice_candidate",
-        async ({ candidate }) => {
-          const pc =
-            peerConnectionRef.current;
-
-          if (
-            !pc ||
-            pc.signalingState === "closed"
-          ) {
-            return;
-          }
-
-          if (pc.remoteDescription) {
-            try {
-              await pc.addIceCandidate(
-                new RTCIceCandidate(
-                  candidate,
-                ),
-              );
-            } catch (error) {
-              debugLog(
-                "Failed to add ICE candidate:",
-                error,
-              );
-            }
-          } else {
-            pendingCandidates.current.push(
-              candidate,
-            );
-          }
-        },
-      );
-
-      // ------------------------------------
-      // STRANGER DISCONNECTED
-      // ------------------------------------
-
-      newSocket.on(
-        "stranger_disconnected",
-        (data?: { reason?: string }) => {
-          if (connectionTimeoutRef.current) {
-            clearTimeout(connectionTimeoutRef.current);
-            connectionTimeoutRef.current = null;
-          }
-
-          const msg = data?.reason || "Stranger disconnected. Click Next for someone new.";
-          setStatus(msg);
-
-          setMessages((prev) => [
-            ...prev,
-            {
-              sender: "system",
-              text:
-                data?.reason || "The stranger has disconnected.",
-            },
-          ]);
-
-          clearPeerConnection();
-
-          setRemoteStream(null);
-          remoteStreamRef.current = null;
-
-          setRoomId(null);
-          roomIdRef.current = null;
-        },
-      );
-    },
-    [
-      attemptIceRecovery,
-      cleanupConnection,
-      clearPeerConnection,
-      createPeerConnection,
-      handleCallLost,
-      restartIceOffer,
-      setupDataChannel,
-      teardownCall,
-    ],
-  );
-
-  // Best-effort instant room teardown on a deliberate tab close: at the
-  // transport level a real close looks exactly like a network blip, so
-  // without this the partner would wait out the whole away grace period.
-  useEffect(() => {
-    const onPageHide = () => {
-      const activeSocket = socketRef.current;
-      const activeRoomId = roomIdRef.current;
-      if (activeSocket?.connected && activeRoomId) {
-        activeSocket.emit("leave_room", { roomId: activeRoomId });
-      }
-    };
-    window.addEventListener("pagehide", onPageHide);
-    return () => window.removeEventListener("pagehide", onPageHide);
-  }, []);
-
-  // ----------------------------------------
-  // CAMERA ACQUISITION (shared)
-  // ----------------------------------------
-  // Single path for turning the camera on, used by the entry preview and by
-  // Start. Concurrent callers share one getUserMedia request; a teardown
-  // while the prompt is open cancels the handoff so the camera can't come
-  // back on after the session was torn down.
-  const acquireCamera = useCallback(async (): Promise<MediaStream> => {
-    if (localStreamRef.current) return localStreamRef.current;
-    if (cameraPromiseRef.current) return cameraPromiseRef.current;
-
-    const attemptAtAsk = searchAttemptRef.current;
-    // Share the POST-CHECK promise, not the raw getUserMedia promise: every
-    // awaiter must get the same outcome. Sharing the raw promise let a
-    // deduped caller keep a stream whose tracks the creator then stopped as
-    // stale, leaving calls with a dead outbound video (found by E2E probe).
-    const promise = (async () => {
-      const stream = await navigator.mediaDevices.getUserMedia(MEDIA_CONSTRAINTS);
-      if (
-        attemptAtAsk !== searchAttemptRef.current ||
-        localStreamRef.current
-      ) {
-        stream.getTracks().forEach((track) => track.stop());
-        if (localStreamRef.current) return localStreamRef.current;
-        throw new Error("Camera request was cancelled.");
-      }
-      localStreamRef.current = stream;
-      setLocalStream(stream);
-      intentionalStopRef.current = false;
-      // Camera unplugged / device lost mid-call: the local preview freezes
-      // silently without this, and the stranger just sees a stuck frame.
-      stream.getTracks().forEach((track) => {
-        track.onended = () => {
-          if (intentionalStopRef.current) return;
-          if (localStreamRef.current !== stream) return;
-          // Release every track and the socket too. Keeping the ended stream
-          // cached would make the next Start reuse a dead camera forever.
-          cleanupConnection();
-          setIsError(true);
-          setStatus("Your camera disconnected. Fix it and press Start again.");
-        };
-      });
-      return stream;
-    })();
-    cameraPromiseRef.current = promise;
-
-    try {
-      return await promise;
-    } finally {
-      cameraPromiseRef.current = null;
-    }
-  }, [cleanupConnection]);
-
-  // ----------------------------------------
-  // START SEARCH
-  // ----------------------------------------
-
-  const startSearch = useCallback(
-    async () => {
-      // Firebase is still determining
-      // authentication state.
-      if (authLoading) {
-        setStatus("Signing you in...");
-        return;
-      }
-
-      // No Firebase user.
-      if (!user) {
-        setStatus(
-          "Please sign in before starting KMegle.",
-        );
-        return;
-      }
-
-      // Check moderation cooldown
-      if (typeof window !== "undefined") {
-        const stored = localStorage.getItem("kmegle_nsfw_cooldown_until");
-        if (stored) {
-          const expiry = parseInt(stored, 10);
-          const remaining = Math.max(0, Math.ceil((expiry - Date.now()) / 1000));
-          if (remaining > 0) {
-            const mins = Math.floor(remaining / 60);
-            const secs = remaining % 60;
-            setStatus(
-              `🚨 Moderation cooldown active (${mins}:${secs.toString().padStart(2, "0")}). Please wait.`
-            );
-            return;
-          } else {
-            localStorage.removeItem("kmegle_nsfw_cooldown_until");
-          }
+      s.on("partner_reconnected", (p: Signal) => {
+        const c = accept(p);
+        if (c) {
+          setPartnerAway(false);
+          if (c.pc.connectionState !== "connected") recover(c);
+          else setStatus("Connected to another student.");
         }
-      }
-
-      const attempt = ++searchAttemptRef.current;
-      setIsError(false);
-      setStatus("Turning on your camera...");
-
-      setIsConnecting(true);
-
-      // Clear the chat log for this fresh attempt — the video panel's status
-      // overlay already shows live progress ("Turning on your camera...",
-      // "Getting ready...", etc.), so we don't need a system message here too.
-      setMessages([]);
-
-      try {
-        // ----------------------------------
-        // CAMERA + MICROPHONE
-        // ----------------------------------
-        // The entry flow already turns the camera on for the preview, so
-        // this usually just reuses that stream; it only asks again when the
-        // preview isn't running (e.g. permission was denied earlier).
-        // If Start raced the entry preview's in-flight request, that request
-        // is cancelled by the attempt bump; retry once to get a live stream.
-        let stream: MediaStream;
-        try {
-          stream = await acquireCamera();
-        } catch (firstError) {
-          if (
-            firstError instanceof Error &&
-            firstError.message === "Camera request was cancelled."
-          ) {
-            stream = await acquireCamera();
-          } else {
-            throw firstError;
-          }
+      });
+      s.on("session_resume_result", (p: Signal & { resumed: boolean }) => {
+        if (!connectedOnce) return;
+        const c = call.current;
+        if (!c) return;
+        if (resumeTimer.current) clearTimeout(resumeTimer.current);
+        resumeTimer.current = null;
+        if (!p.resumed || !accept(p)) {
+          endCall("The previous call ended. Choose Next.");
+        } else if (c.pc.connectionState !== "connected") recover(c);
+        else setStatus("Connected to another student.");
+      });
+      s.on("stranger_disconnected", (p: Signal) => {
+        if (accept(p)) {
+          clearPeer();
+          setSafetyTarget({ roomId: p.roomId, sessionNonce: p.sessionNonce });
+          setStatus("The student left. Choose Next to meet someone else.");
+          append("system", "The call ended.");
         }
-        if (attempt !== searchAttemptRef.current) return;
-
-        // ----------------------------------
-        // TURN
-        // ----------------------------------
-
-        setStatus("Getting ready...");
-
-        await prefetchIceConfig();
-        if (attempt !== searchAttemptRef.current) return;
-
-        // ----------------------------------
-        // FIREBASE TOKEN
-        // ----------------------------------
-
-        // Fail early with a clear error if the account can't get a token.
-        await user.getIdToken();
-        if (attempt !== searchAttemptRef.current) return;
-
-        // ----------------------------------
-        // SOCKET.IO
-        // ----------------------------------
-
-        sessionIdRef.current ??= crypto.randomUUID();
-        const sessionId = sessionIdRef.current;
-        const newSocket = io(
-          getSocketUrl(),
-          {
-            transports: ["polling", "websocket"],
-
-            // A function is re-evaluated on every (re)connect, so automatic
-            // reconnects after an hour don't reuse an expired ID token.
-            auth: (cb) => {
-              user
-                .getIdToken()
-                .then((token) => cb({ token, sessionId }))
-                .catch(() => cb({ token: "" }));
-            },
-          },
-        );
-
-        setSocket(newSocket);
-        socketRef.current = newSocket;
-
-        registerSocketHandlers(
-          newSocket,
-          stream,
-        );
-      } catch (error) {
-        if (attempt !== searchAttemptRef.current) return;
-        console.error(
-          "Media / connection error:",
-          error,
-        );
-
-        setIsConnecting(false);
+      });
+      s.on("match_error", (p: { message?: string }) => {
+        setStatus(p?.message || "Search unavailable. Try again.");
         setIsError(true);
-        setStatus(mediaErrorStatus(error));
-
-        // A camera stream that was already running for the preview stays
-        // alive so the preview doesn't black out on a failed attempt.
-        // (A stream acquired inside this failed attempt was never stored.)
-        teardownCall();
+      });
+      s.on("banned_alert", () => {
+        cleanupConnection();
+        setStatus(
+          "Your account is suspended. Contact support if this is a mistake.",
+        );
+        setIsError(true);
+      });
+      s.on("cooldown_active", (p: { remaining: number }) => {
+        cleanupConnection();
+        setStatus(
+          `Please wait ${Math.max(0, Math.min(300, p?.remaining || 30))} seconds before trying again.`,
+        );
+        setIsError(true);
+      });
+      s.connect();
+    } catch (error) {
+      if (owner.current === generation && mounted.current) {
+        setStatus(explanation(error));
+        setIsError(true);
+        setIsConnecting(false);
+      }
+    } finally {
+      if (owner.current === generation) operation.current = false;
+    }
+  }, [
+    user,
+    authLoading,
+    acquire,
+    configureIce,
+    find,
+    owns,
+    endCall,
+    cleanupConnection,
+    clearPeer,
+    append,
+    emitSignal,
+    setupChannel,
+    recover,
+    offer,
+  ]);
+  const stop = useCallback(
+    (message?: string) => {
+      cleanupConnection();
+      pendingSafety.current = null;
+      setSafetyRetry(false);
+      setSafetyPending(false);
+      setStatus(message || "You left. Camera and microphone are off.");
+      setIsError(!!message);
+    },
+    [cleanupConnection],
+  );
+  const next = useCallback(() => {
+    const s = socketRef.current;
+    if (
+      !s?.connected ||
+      safetyPending ||
+      pendingSafety.current ||
+      operation.current
+    )
+      return;
+    s.emit("stop_search");
+    leave(call.current);
+    clearPeer();
+    setSafetyTarget(null);
+    setMessages([]);
+    void start();
+  }, [leave, clearPeer, start, safetyPending]);
+  const toggleSearch = useCallback(() => {
+    if (socketRef.current || isConnecting) stop();
+    else void start();
+  }, [isConnecting, start, stop]);
+  const toggleTrack = useCallback((kind: "audio" | "video") => {
+    const tracks =
+      local.current
+        ?.getTracks()
+        .filter((t) => t.kind === kind && t.readyState === "live") || [];
+    if (!tracks.length) return;
+    const enabled = !tracks.some((t) => t.enabled);
+    tracks.forEach((t) => {
+      t.enabled = enabled;
+    });
+    if (kind === "audio") setAudioEnabled(enabled);
+    else setVideoEnabled(enabled);
+  }, []);
+  const selectDevice = useCallback(
+    async (kind: "audio" | "video", deviceId: string) => {
+      if (deviceOperation.current) return;
+      deviceOperation.current = true;
+      setDevicePending(true);
+      const generation = owner.current;
+      const capturedCall = call.current;
+      let replacement: MediaStream | null = null;
+      try {
+        replacement = await navigator.mediaDevices.getUserMedia({
+          [kind]: { deviceId: { exact: deviceId } },
+        });
+        if (
+          owner.current !== generation ||
+          !mounted.current ||
+          call.current !== capturedCall
+        )
+          return;
+        const stream = local.current;
+        if (!stream)
+          throw new Error("Start Camera check before choosing a device.");
+        const track = replacement.getTracks()[0];
+        const old = stream.getTracks().find((t) => t.kind === kind);
+        track.enabled = old?.enabled ?? true;
+        const sender = capturedCall?.pc
+          .getSenders()
+          .find((s) => s.track?.kind === kind);
+        if (sender) await sender.replaceTrack(track);
+        if (
+          owner.current !== generation ||
+          !mounted.current ||
+          call.current !== capturedCall
+        )
+          return;
+        old?.stop();
+        track.onended = () => {
+          if (local.current?.getTracks().includes(track)) {
+            setStatus(
+              `${kind === "audio" ? "Microphone" : "Camera"} disconnected. Choose another device.`,
+            );
+            setIsError(true);
+            if (kind === "audio") setAudioEnabled(false);
+            else setVideoEnabled(false);
+          }
+        };
+        const updated = new MediaStream([
+          ...stream.getTracks().filter((t) => t.kind !== kind),
+          track,
+        ]);
+        local.current = updated;
+        setLocalStream(updated);
+        replacement = null;
+        await refreshDevices();
+        setStatus("Device updated.");
+      } catch (error) {
+        if (owner.current === generation) {
+          setStatus(explanation(error));
+          setIsError(true);
+        }
+      } finally {
+        replacement?.getTracks().forEach((t) => t.stop());
+        deviceOperation.current = false;
+        if (mounted.current) setDevicePending(false);
       }
     },
-    [
-      authLoading,
-      acquireCamera,
-      prefetchIceConfig,
-      registerSocketHandlers,
-      teardownCall,
-      user,
-    ],
+    [refreshDevices],
   );
-
-  // ----------------------------------------
-  // PREPARE CAMERA (entry preview)
-  // ----------------------------------------
-  // Turns the camera on as soon as someone lands on the chat page, before
-  // any matching starts, so they can see themselves first. Failure leaves a
-  // readable status; pressing Start retries the request.
-  // Turns the camera on as soon as someone lands on the chat page, before
-  // any matching starts, so they see themselves first. On failure a readable
-  // status explains the problem; pressing Start retries the request.
-  const prepareCamera = useCallback(async () => {
-    if (
-      typeof navigator === "undefined" ||
-      !navigator.mediaDevices?.getUserMedia
-    ) {
-      setIsError(true);
-      setStatus("This browser doesn't support camera access.");
-      return;
-    }
-    if (localStreamRef.current || cameraPromiseRef.current) return;
-
+  const submitSafety = useCallback(async () => {
+    const intent = pendingSafety.current;
+    let s = socketRef.current,
+      temporary: Socket | null = null;
+    if (!intent || safetyBusy.current) return;
+    safetyBusy.current = intent.packet.requestId;
+    setSafetyPending(true);
+    setSafetyRetry(false);
+    setStatus("Saving your safety request…");
     try {
-      await acquireCamera();
-    } catch (error) {
-      // A teardown racing the entry request (strict-mode remount in dev, or
-      // any stray cleanup) cancels the pending ask; retry once so the
-      // preview still comes up. prepareCamera only runs on entry, so this
-      // can't restart the camera after a deliberate Stop.
-      if (
-        error instanceof Error &&
-        error.message === "Camera request was cancelled."
-      ) {
+      if (!s?.connected) {
+        if (!user) throw new Error("Sign in again to retry this request.");
+        const token = await getToken(user);
+        if (pendingSafety.current !== intent || !mounted.current) return;
+        temporary = io(origin(), {
+          autoConnect: false,
+          reconnection: false,
+          timeout: 8000,
+          auth: { token, sessionId: pageSession.current, protocolVersion: 2 },
+        });
+        safetyTransport.current = temporary;
+        s = temporary;
+        const transport = temporary;
+        let deadline: ReturnType<typeof setTimeout> | undefined;
         try {
-          await acquireCamera();
-          return;
-        } catch (retryError) {
-          setIsError(true);
-          setStatus(mediaErrorStatus(retryError));
-          return;
+          await new Promise<void>((resolve, reject) => {
+            deadline = setTimeout(
+              () => reject(new Error("Connection timed out. Please retry.")),
+              8000,
+            );
+            transport.once("connect", resolve);
+            transport.once("connect_error", reject);
+            transport.connect();
+          });
+        } finally {
+          clearTimeout(deadline);
         }
       }
-      setIsError(true);
-      setStatus(mediaErrorStatus(error));
-    }
-  }, [acquireCamera]);
-
-  // ----------------------------------------
-  // STOP SEARCH
-  // ----------------------------------------
-
-  const stopSearch = useCallback(() => {
-    socketRef.current?.emit(
-      "stop_search",
-    );
-
-    cleanupConnection();
-    setIsError(false);
-
-    setStatus(
-      "Stopped. Camera off — press Start when you're ready.",
-    );
-  }, [cleanupConnection]);
-
-  // ----------------------------------------
-  // TOGGLE SEARCH
-  // ----------------------------------------
-
-  const toggleSearch = useCallback(
-    async () => {
-      if (socketRef.current || isConnecting) {
-        stopSearch();
-      } else {
-        await startSearch();
-      }
-    },
-    [startSearch, stopSearch, isConnecting],
-  );
-
-  // ----------------------------------------
-  // NEXT
-  // ----------------------------------------
-
-  const next = useCallback(() => {
-    const activeSocket =
-      socketRef.current;
-
-    if (!activeSocket) return;
-
-    resetForNextMatch();
-    setIsError(false);
-
-    setStatus(
-      "Finding someone new...",
-    );
-
-    // Identity is already attached
-    // to the authenticated socket.
-    activeSocket.emit("find_match");
-  }, [resetForNextMatch]);
-
-  // ----------------------------------------
-  // BLOCK
-  // ----------------------------------------
-
-  const block = useCallback(() => {
-    const activeSocket = socketRef.current;
-
-    if (
-      !activeSocket ||
-      !roomIdRef.current
-    ) {
-      return;
-    }
-
-    // Optimistically reset connection state NOW so the UI immediately
-    // reflects that we are no longer connected (no "Connected! Video active").
-    const blockedRoomId = roomIdRef.current;
-    clearPeerConnection();
-    setRemoteStream(null);
-    remoteStreamRef.current = null;
-    setRoomId(null);
-    roomIdRef.current = null;
-    setMessages([
-      { sender: "system", text: "User blocked. Looking for someone new..." },
-    ]);
-    setIsError(false);
-    setStatus("User blocked. Looking for someone new...");
-
-    // Let the server know — the ack (user_blocked) will then emit find_match
-    activeSocket.emit("block_user", {
-      roomId: blockedRoomId,
-    });
-  }, [clearPeerConnection]);
-
-  const reportUser = useCallback((reason: string = "Inappropriate content / behavior") => {
-    const activeSocket = socketRef.current;
-    const reportedRoomId = roomIdRef.current;
-    if (!activeSocket || !reportedRoomId || reportTimerRef.current) return;
-
-    let settled = false;
-    const finishReport = (message: string, failed: boolean) => {
-      if (settled) return;
-      settled = true;
-      activeSocket.off("user_reported", onReported);
-      activeSocket.off("report_failed", onFailed);
-      // A stop or newer search must not have its state overwritten by this reply.
-      if (socketRef.current !== activeSocket || !reportTimerRef.current) return;
-      cleanupConnection();
-      setIsError(failed);
-      setStatus(message);
-    };
-    const onReported = () => finishReport("Report received. Chat ended.", false);
-    const onFailed = () => finishReport("Report could not be confirmed. Chat ended. Contact support if needed.", true);
-    activeSocket.once("user_reported", onReported);
-    activeSocket.once("report_failed", onFailed);
-    reportTimerRef.current = setTimeout(() => finishReport("Report receipt was not confirmed. Chat ended. Contact support if needed.", true), 8000);
-
-    setStatus("Sending report. Ending chat...");
-    // Stop media immediately, but keep room membership until the server handles
-    // the report. Leaving first can delete the room before it saves the report.
-    roomIdRef.current = null;
-    setRoomId(null);
-    clearPeerConnection();
-    intentionalStopRef.current = true;
-    localStreamRef.current?.getTracks().forEach((track) => track.stop());
-    localStreamRef.current = null;
-    setLocalStream(null);
-    remoteStreamRef.current = null;
-    setRemoteStream(null);
-    activeSocket.emit("report_user", { roomId: reportedRoomId, reason });
-  }, [cleanupConnection, clearPeerConnection]);
-
-  // ----------------------------------------
-  // SEND MESSAGE
-  // ----------------------------------------
-
-  const sendMessage = useCallback(
-    (event: FormEvent) => {
-      event.preventDefault();
-
-      const message =
-        chatInput.trim().slice(0, MAX_MESSAGE_LENGTH);
-
-      const channel =
-        dataChannelRef.current;
-
-      if (
-        !message ||
-        !channel ||
-        channel.readyState !== "open"
-      ) {
+      if (pendingSafety.current !== intent || !mounted.current) return;
+      const result = await s
+        .timeout(8000)
+        .emitWithAck(intent.event, intent.packet);
+      if (pendingSafety.current !== intent) return;
+      if (result?.retryable === false) {
+        pendingSafety.current = null;
+        cleanupConnection();
+        setStatus(
+          "Could not recover this safety request. It may already have reached the server. Contact support if needed.",
+        );
+        setIsError(true);
+        setSafetyRetry(false);
         return;
       }
-
-      channel.send(message);
-
-      setMessages((prev) => [
-        ...prev,
-        {
-          sender: "me",
-          text: message,
+      if (!result?.ok)
+        throw new Error(result?.message || "Your request was not saved.");
+      pendingSafety.current = null;
+      setStatus(
+        intent.event === "block_user"
+          ? "Student blocked. You will not be matched again."
+          : "Report saved for review. Your call has ended.",
+      );
+      setIsError(false);
+      cleanupConnection();
+    } catch (error) {
+      if (pendingSafety.current === intent) {
+        setStatus(
+          `${explanation(error)} Retry saves the same request for the same student.`,
+        );
+        setIsError(true);
+        setSafetyRetry(true);
+      }
+    } finally {
+      temporary?.removeAllListeners();
+      temporary?.disconnect();
+      if (safetyTransport.current === temporary) safetyTransport.current = null;
+      if (safetyBusy.current === intent.packet.requestId)
+        safetyBusy.current = null;
+      if (
+        mounted.current &&
+        (!pendingSafety.current || pendingSafety.current === intent)
+      )
+        setSafetyPending(false);
+    }
+  }, [user, cleanupConnection]);
+  const safety = useCallback(
+    (event: string, reason = "user_reported") => {
+      const c = call.current || safetyTarget;
+      if (
+        !c ||
+        !socketRef.current?.connected ||
+        safetyPending ||
+        pendingSafety.current
+      )
+        return;
+      pendingSafety.current = {
+        event,
+        packet: {
+          roomId: c.roomId,
+          sessionNonce: c.sessionNonce,
+          requestId: crypto.randomUUID(),
+          reason,
         },
-      ]);
-
-      setChatInput("");
+      };
+      setSafetyTarget(null);
+      clearPeer();
+      local.current?.getTracks().forEach((t) => t.stop());
+      local.current = null;
+      setLocalStream(null);
+      void submitSafety();
     },
-    [chatInput],
+    [clearPeer, submitSafety, safetyPending, safetyTarget],
   );
-
-  // ----------------------------------------
-  // RETURN API
-  // ----------------------------------------
-
+  const sendMessage = useCallback(
+    (e: FormEvent) => {
+      e.preventDefault();
+      const text = chatInput.trim().slice(0, 1000),
+        dc = channel.current;
+      if (!text) return;
+      if (!dc || dc.readyState !== "open" || dc.bufferedAmount > 65536) {
+        setStatus(
+          "Text is unavailable or busy. Your draft is kept; try again shortly.",
+        );
+        setIsError(true);
+        return;
+      }
+      try {
+        dc.send(text);
+        append("me", text);
+        setChatInput("");
+      } catch {
+        setStatus("Message could not be sent. Your draft is kept.");
+        setIsError(true);
+      }
+    },
+    [chatInput, append],
+  );
+  const downloadDiagnostics = useCallback(async () => {
+    const c = call.current;
+    if (!diagnosticsEnabled || !c) return;
+    try {
+      const stats = await c.pc.getStats();
+      if (!owns(c)) return;
+      const list = Array.from(stats.values());
+      const transport = list.find(
+        (s) => s.type === "transport" && s.selectedCandidatePairId,
+      );
+      const pair = transport
+        ? stats.get(transport.selectedCandidatePairId)
+        : list.find(
+            (s) =>
+              s.type === "candidate-pair" &&
+              s.nominated &&
+              s.state === "succeeded",
+          );
+      const candidate = (id: string) => {
+        const s = stats.get(id);
+        return s
+          ? {
+              type: s.candidateType,
+              protocol: s.protocol,
+              relayProtocol: s.relayProtocol,
+            }
+          : null;
+      };
+      const inbound = list
+        .filter((s) => s.type === "inbound-rtp")
+        .map((s) => ({
+          kind: s.kind,
+          bytesReceived: s.bytesReceived,
+          packetsLost: s.packetsLost,
+          packetsReceived: s.packetsReceived,
+          framesDecoded: s.framesDecoded,
+        }));
+      const t = timings.current;
+      const report = {
+        mode: iceMode.current,
+        peerState: c.pc.connectionState,
+        textReady: channel.current?.readyState === "open",
+        selectedPair: pair
+          ? {
+              local: candidate(pair.localCandidateId),
+              remote: candidate(pair.remoteCandidateId),
+              roundTripTime: pair.currentRoundTripTime,
+            }
+          : null,
+        inbound,
+        captureMs:
+          t.media !== undefined && t.started !== undefined
+            ? t.media - t.started
+            : undefined,
+        credentialsMs:
+          t.credentials !== undefined && t.media !== undefined
+            ? t.credentials - t.media
+            : undefined,
+        queueMs:
+          t.matched !== undefined && t.search !== undefined
+            ? t.matched - t.search
+            : undefined,
+        firstPlaybackMs:
+          t.playback !== undefined && t.matched !== undefined
+            ? t.playback - t.matched
+            : undefined,
+        connectionMs:
+          t.connected && t.matched ? t.connected - t.matched : undefined,
+      };
+      const url = URL.createObjectURL(
+        new Blob([JSON.stringify(report, null, 2)], {
+          type: "application/json",
+        }),
+      );
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "kmegle-connection.json";
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch {
+      setStatus("Could not collect a connection snapshot.");
+      setIsError(true);
+    }
+  }, [owns]);
+  const markMediaReady = useCallback((stream: MediaProvider | null) => {
+    if (stream && stream === remoteSource.current && call.current) {
+      call.current.playable = true;
+      if (call.current.pc.connectionState === "connected")
+        clearTimeout(call.current.timer);
+      setMediaReady(true);
+      timings.current.playback ??= performance.now();
+    }
+  }, []);
+  const connectionPhase: ConnectionPhase =
+    peerReady && mediaReady
+      ? "live"
+      : roomId
+        ? "negotiating"
+        : isConnecting || (socket && !signalingReady)
+          ? "connecting"
+          : searching
+            ? "waiting"
+            : socket
+              ? "ended"
+              : "idle";
   return {
+    viewVersion,
+    markMediaReady,
+    hasSafetyTarget: !!safetyTarget || !!roomId,
+    diagnosticsEnabled,
+    downloadDiagnostics,
     socket,
     status,
-    isConnecting,
     isError,
+    isConnecting,
     connectionPhase,
     roomId,
     localStream,
     remoteStream,
-    partnerAway,
-    selfReconnecting,
     messages,
     chatInput,
     setChatInput,
-    toggleSearch,
-    next,
-    block,
-    reportUser,
-    sendMessage,
+    partnerAway,
+    selfReconnecting,
+    signalingReady,
+    channelReady,
+    audioEnabled,
+    videoEnabled,
+    devices,
+    devicePending,
+    cameraPending,
+    safetyPending,
+    safetyRetry,
     prepareCamera,
     cleanupConnection,
+    toggleSearch,
+    start,
+    stop,
+    next,
+    block: () => safety("block_user"),
+    reportUser: (reason: string) => safety("report_user", reason),
+    retrySafety: submitSafety,
+    sendMessage,
+    toggleTrack,
+    selectDevice,
   };
 }

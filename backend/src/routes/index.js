@@ -6,22 +6,14 @@ const adminRouter = require("./admin");
 const blocksRouter = require("./blocks");
 
 const router = express.Router();
+router.use("/acceptance", require("./acceptance"));
 
 router.use("/health", healthRouter);
 
-router.use(
-  "/turn-credentials",
-  turnRouter
-);
+router.use("/turn-credentials", turnRouter);
 
-router.use(
-  "/admin",
-  adminRouter
-);
+router.use("/admin", adminRouter);
 
-router.use(
-  "/blocks",
-  blocksRouter
-);
+router.use("/blocks", blocksRouter);
 
 module.exports = router;

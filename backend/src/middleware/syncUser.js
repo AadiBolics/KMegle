@@ -1,4 +1,4 @@
-const crypto = require("crypto");
+﻿const crypto = require("crypto");
 const dbService = require("../services/dbService");
 
 const EMAIL_HASH_SECRET = process.env.EMAIL_HASH_SECRET;
@@ -6,11 +6,11 @@ const EMAIL_HASH_SECRET = process.env.EMAIL_HASH_SECRET;
 if (!EMAIL_HASH_SECRET) {
   if (process.env.NODE_ENV === "production") {
     throw new Error(
-      "🚨 CRITICAL ERROR: EMAIL_HASH_SECRET is missing! It is required in production to prevent email hashes from being brute-forced/rainbow-tabled."
+      "🚨 CRITICAL ERROR: EMAIL_HASH_SECRET is missing! It is required in production to prevent email hashes from being brute-forced/rainbow-tabled.",
     );
   }
   console.warn(
-    "⚠️ EMAIL_HASH_SECRET is not set. Using an insecure default for local/dev only — set this in production."
+    "âš ï¸ EMAIL_HASH_SECRET is not set. Using an insecure default for local/dev only — set this in production.",
   );
 }
 
@@ -29,21 +29,11 @@ async function syncUser(socket, next) {
 
     const emailHash = hashEmail(socket.user.email);
 
-    await dbService.syncUser(
-      socket.user.uid,
-      emailHash
-    );
-
-    console.log(
-      `🗄️ User synced: ${socket.user.email} (${socket.user.uid})`
-    );
+    await dbService.syncUser(socket.user.uid, emailHash);
 
     next();
   } catch (error) {
-    console.error(
-      "❌ Failed to sync user:",
-      error.message
-    );
+    console.error("âŒ Failed to sync user:", error.message);
 
     next(new Error("Unable to initialize user account"));
   }

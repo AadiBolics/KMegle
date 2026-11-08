@@ -38,23 +38,6 @@ const nextConfig: NextConfig = {
       },
     ];
   },
-
-  // Serve self-hosted NSFWJS model weights with long-lived cache headers.
-  // The weights are immutable for a given model version, so 1-year max-age is safe.
-  // This implements the "self-host model weights" requirement from the guide.
-  async headers() {
-    return [
-      {
-        source: "/models/:path*",
-        headers: [
-          {
-            key: "Cache-Control",
-            value: "public, max-age=31536000, immutable",
-          },
-        ],
-      },
-    ];
-  },
 };
 
 export default nextConfig;

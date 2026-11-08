@@ -1,142 +1,56 @@
-function registerWebRTCSocket(socket, roomService) {
-
-  console.log(
-    "🔌 WebRTC socket handlers registered for:",
-    socket.id
-  );
-
-
-  socket.on(
-    "webrtc_offer",
-    ({ offer, roomId }) => {
-      console.log("📡 WEBRTC OFFER RECEIVED", { socketId: socket.id, roomId });
-
-      if (!offer || !roomId) {
-        console.warn(
-          "⚠️ Invalid WebRTC offer payload"
-        );
-        return;
+const { validSession, envelope } = require("../services/sessionProtocol");
+module.exports = function registerWebRTCSocket(socket, rooms) {
+  for (const [event, field, type] of [
+    ["webrtc_offer", "offer", "offer"],
+    ["webrtc_answer", "answer", "answer"],
+    ["webrtc_ice_candidate", "candidate", null],
+    ["webrtc_restart_request", null, null],
+  ]) {
+    socket.on(event, (packet, ack) => {
+      const reply = typeof ack === "function" ? ack : () => {};
+      const room = validSession(rooms, socket, packet);
+      if (
+        !room ||
+        !Number.isSafeInteger(packet.negotiationId) ||
+        packet.negotiationId < 0
+      )
+        return reply({ ok: false });
+      if (event === "webrtc_offer") {
+        if (
+          room.u1.socketId !== socket.id ||
+          packet.negotiationId <= (room.negotiationId ?? -1) ||
+          packet.negotiationId > (room.negotiationId ?? -1) + 1
+        )
+          return reply({ ok: false });
+      } else if (packet.negotiationId !== (room.negotiationId || 0))
+        return reply({ ok: false });
+      if (event === "webrtc_answer" && room.u2.socketId !== socket.id)
+        return reply({ ok: false });
+      if (field) {
+        const value = packet[field];
+        if (!value || typeof value !== "object") return reply({ ok: false });
+        if (
+          type &&
+          (value.type !== type ||
+            typeof value.sdp !== "string" ||
+            value.sdp.length > 60000)
+        )
+          return reply({ ok: false });
+        if (
+          !type &&
+          (typeof value.candidate !== "string" || value.candidate.length > 4096)
+        )
+          return reply({ ok: false });
       }
-
-      const isMember =
-        roomService.isMember(
-          roomId,
-          socket.id
-        );
-
-      if (!isMember) {
-        console.warn(
-          "🚫 Socket is not a member of room:",
-          socket.id,
-          roomId
-        );
-        return;
-      }
-
+      if (event === "webrtc_offer") room.negotiationId = packet.negotiationId;
       socket
-        .to(roomId)
-        .emit("webrtc_offer", {
-          offer,
+        .to(packet.roomId)
+        .emit(event, {
+          ...envelope(packet.roomId, room),
+          negotiationId: packet.negotiationId,
+          ...(field ? { [field]: packet[field] } : {}),
         });
-    }
-  );
-
-  socket.on(
-    "webrtc_answer",
-    ({ answer, roomId }) => {
-      console.log("📡 WEBRTC ANSWER RECEIVED", { socketId: socket.id, roomId });
-
-      if (!answer || !roomId) {
-        console.warn(
-          "⚠️ Invalid WebRTC answer payload"
-        );
-        return;
-      }
-
-      const isMember =
-        roomService.isMember(
-          roomId,
-          socket.id
-        );
-
-      if (!isMember) {
-        console.warn(
-          "🚫 Socket is not a member of room:",
-          socket.id,
-          roomId
-        );
-        return;
-      }
-
-      socket
-        .to(roomId)
-        .emit("webrtc_answer", {
-          answer,
-        });
-    }
-  );
-
-  // The non-initiator cannot send offers, so on a hard ICE failure it asks
-  // the initiator (via the room) to perform the ICE restart renegotiation.
-  socket.on(
-    "webrtc_restart_request",
-    ({ roomId }) => {
-      if (!roomId) {
-        return;
-      }
-
-      const isMember =
-        roomService.isMember(
-          roomId,
-          socket.id
-        );
-
-      if (!isMember) {
-        return;
-      }
-
-      socket
-        .to(roomId)
-        .emit("webrtc_restart_request", {});
-    }
-  );
-
-  socket.on(
-    "webrtc_ice_candidate",
-    ({ candidate, roomId }) => {
-      if (process.env.DEBUG_SOCKETS) {
-        console.log("🧊 WEBRTC ICE CANDIDATE RECEIVED", { socketId: socket.id, roomId });
-      }
-
-      if (!candidate || !roomId) {
-        return;
-      }
-
-      const isMember =
-        roomService.isMember(
-          roomId,
-          socket.id
-        );
-
-      if (!isMember) {
-        console.warn(
-          "🚫 ICE sender is not room member:",
-          socket.id,
-          roomId
-        );
-        return;
-      }
-
-      socket
-        .to(roomId)
-        .emit(
-          "webrtc_ice_candidate",
-          {
-            candidate,
-          }
-        );
-    }
-  );
-}
-
-module.exports = registerWebRTCSocket;
+      reply({ ok: true });
+    });
+  }
+};

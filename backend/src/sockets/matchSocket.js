@@ -1,78 +1,59 @@
-const presenceService = require("../services/presenceService");
-
-function registerMatchSocket(socket, queue, dbService, roomService, io) {
-  // Guards against a client firing find_match repeatedly while the async
-  // eligibility checks below are still in flight.
-  let searchInFlight = false;
-
-  socket.on("find_match", async () => {
-    const userId = socket.user?.uid;
-
-    if (!userId) {
-      console.error("❌ No authenticated user on socket");
-      return;
-    }
-
-    if (searchInFlight || queue.nodesMap.has(socket.id)) {
-      return;
-    }
-
-    searchInFlight = true;
-
+﻿const presence = require("../services/presenceService");
+module.exports = function registerMatchSocket(socket, queue, db, rooms, io) {
+  let generation = 0,
+    inFlight = false;
+  socket.on("find_match", async (packet, ack) => {
+    const reply = typeof ack === "function" ? ack : () => {};
+    if (!socket.user?.uid)
+      return reply({ ok: false, message: "Sign in again." });
+    if (inFlight || queue.nodesMap.has(socket.id)) return reply({ ok: true });
+    const captured = ++generation;
+    inFlight = true;
     try {
-      // 1. Check permanent ban status
-      const isBanned = await dbService.isUserBanned(userId);
-
-      if (isBanned) {
-        console.log(`🛑 Banned user ${userId} attempted to connect.`);
-        socket.emit("banned_alert", {
-          message: "Your account has been suspended for policy violations.",
+      if (!(await db.hasAccepted(socket.user.uid)))
+        return reply({
+          ok: false,
+          message: "Review and accept the current terms before matching.",
         });
-        return;
-      }
-
-      // 2. Check server-enforced automated NSFW cooldown
-      const cooldownRemaining = await dbService.getCooldownRemaining(userId);
-      if (cooldownRemaining > 0) {
-        socket.emit("cooldown_active", { remaining: cooldownRemaining });
-        return;
-      }
-
-      // The socket may have dropped while we were awaiting the DB. Queueing
-      // it now would leave a ghost entry that can be matched into a dead room.
-      if (!socket.connected) {
-        return;
-      }
-
-      // Searching again while still in a room (e.g. a missed "next" event)
-      // must end that room first, otherwise the old partner is left hanging
-      // and the room leaks.
-      for (const roomId of roomService.getRoomsForSocket(socket.id)) {
-        presenceService.clearRoom(roomId, roomService);
-        socket.to(roomId).emit("stranger_disconnected");
-        socket.leave(roomId);
-        roomService.deleteRoom(roomId);
-      }
-
-      // A fresh search also ends any room still held for this user after a
-      // brief disconnect, so the old partner is freed immediately.
-      presenceService.endAwayForUser({ io, roomService, userId, sessionId: presenceService.sessionOf(socket) });
-
-      queue.add(socket, userId);
-    } catch (err) {
-      console.error("❌ Error verifying user eligibility:", err);
-      // Tell the client instead of leaving it on an endless spinner.
-      socket.emit("match_error", {
-        message: "Could not start searching. Please try again.",
+      if (await db.isUserBanned(socket.user.uid))
+        return reply({ ok: false, message: "Your account is suspended." });
+      const remaining = await db.getCooldownRemaining(socket.user.uid);
+      if (captured !== generation || !socket.connected)
+        return reply({ ok: false, message: "Search cancelled." });
+      if (remaining > 0)
+        return reply({
+          ok: false,
+          message: `Please wait ${remaining} seconds.`,
+        });
+      for (const roomId of rooms.getRoomsForSocket(socket.id))
+        presence.endRoom({
+          io,
+          roomService: rooms,
+          roomId,
+          goneSocketId: socket.id,
+        });
+      presence.endAwayForUser({
+        io,
+        roomService: rooms,
+        userId: socket.user.uid,
+        sessionId: presence.sessionOf(socket),
+      });
+      queue.add(socket, socket.user.uid);
+      reply({ ok: true });
+    } catch {
+      reply({
+        ok: false,
+        message: "Could not verify eligibility. Please try again.",
       });
     } finally {
-      searchInFlight = false;
+      if (captured === generation) inFlight = false;
     }
   });
-
-  socket.on("stop_search", () => {
+  const cancel = () => {
+    generation++;
+    inFlight = false;
     queue.remove(socket.id);
-  });
-}
-
-module.exports = registerMatchSocket;
+  };
+  socket.on("stop_search", cancel);
+  socket.on("disconnect", cancel);
+};

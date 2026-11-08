@@ -1,9 +1,15 @@
 const { firebaseAuth } = require("../config/firebaseAdmin");
 
 // Single source of truth for which email domains are allowed to use the app.
-// Intentionally includes both the institutional domain and gmail.com for
-// testing with personal accounts.
-const ALLOWED_DOMAINS = ["@iiitkottayam.ac.in", "@gmail.com"];
+// College-only by default. Staging can explicitly allow named test accounts;
+// keep TEST_ACCOUNT_EMAILS empty in the production student service.
+const ALLOWED_DOMAINS = ["@iiitkottayam.ac.in"];
+const testEmails = new Set(
+  (process.env.TEST_ACCOUNT_EMAILS || "")
+    .split(",")
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean),
+);
 
 class AuthError extends Error {
   constructor(reason) {
@@ -39,7 +45,11 @@ async function verifyFirebaseToken(idToken) {
     throw new AuthError("Email must be verified");
   }
 
-  if (!email || !ALLOWED_DOMAINS.some((domain) => email.endsWith(domain))) {
+  if (
+    !email ||
+    (!ALLOWED_DOMAINS.some((domain) => email.endsWith(domain)) &&
+      !testEmails.has(email))
+  ) {
     throw new AuthError("Only IIIT Kottayam accounts are allowed");
   }
 

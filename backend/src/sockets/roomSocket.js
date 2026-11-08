@@ -1,232 +1,172 @@
-// Per-reporter cooldown tracker shared across all sockets/connections.
-// Maps reporterId -> timestamp (ms) of their last accepted report.
-// Keeps a single reporter from spamming report_peer_nsfw_violation/report_user
-// to repeatedly disconnect+penalize whoever they're paired with.
-const presenceService = require("../services/presenceService");
-
-const lastReportAt = new Map();
-const REPORT_COOLDOWN_MS = 10 * 1000;
-
-function isReportRateLimited(reporterId) {
-  const last = lastReportAt.get(reporterId);
+﻿const {
+  validSession,
+  validSafetySession,
+  envelope,
+} = require("../services/sessionProtocol");
+const presence = require("../services/presenceService");
+const receipts = new Map(),
+  attempts = new Map();
+function prune() {
   const now = Date.now();
-
-  if (last && now - last < REPORT_COOLDOWN_MS) {
-    return true;
-  }
-
-  lastReportAt.set(reporterId, now);
-  return false;
+  for (const [key, value] of receipts)
+    if (value.expires < now) receipts.delete(key);
+  while (receipts.size > 5000) receipts.delete(receipts.keys().next().value);
+  for (const [uid, value] of attempts)
+    if (now - value.start > 60000) attempts.delete(uid);
 }
-
-function registerRoomSocket(
-  socket,
-  queue,
-  roomService,
-  dbService,
-  io
-) {
-  // Manual block
-  socket.on("block_user", async ({ roomId }) => {
-    if (!roomId) return;
-
-    const room = roomService.getRoom(roomId);
-    if (!room) return;
-
-    if (!roomService.isMember(roomId, socket.id)) {
-      console.warn(`⚠️ Unauthorized block attempt by ${socket.id}`);
-      return;
-    }
-
-    const blockerId = socket.user?.uid;
-    const blockedUser = roomService.getOtherUser(roomId, socket.id);
-    if (!blockerId || !blockedUser) return;
-
-    try {
-      const success = await dbService.blockUser(blockerId, blockedUser.userId);
-      if (!success) {
-        socket.emit("block_failed", { message: "Unable to block this user." });
-        return;
+module.exports = function registerRoomSocket(socket, queue, rooms, db, io) {
+  for (const event of [
+    "block_user",
+    "report_user",
+    "report_peer_nsfw_violation",
+    "report_nsfw_violation",
+  ]) {
+    socket.on(event, async (packet, ack) => {
+      const reply = typeof ack === "function" ? ack : () => {};
+      if (!packet || typeof packet !== "object")
+        return reply({ ok: false, message: "Invalid request." });
+      const uid = socket.user?.uid;
+      if (
+        !uid ||
+        typeof packet.requestId !== "string" ||
+        !/^[A-Za-z0-9_-]{16,128}$/.test(packet.requestId)
+      )
+        return reply({ ok: false, message: "Invalid request." });
+      prune();
+      const key = JSON.stringify([
+        uid,
+        presence.sessionOf(socket),
+        event,
+        packet.requestId,
+      ]);
+      let entry = receipts.get(key);
+      if (entry) {
+        if (
+          entry.roomId !== packet.roomId ||
+          entry.sessionNonce !== packet.sessionNonce
+        )
+          return reply({
+            ok: false,
+            message: "Request does not match its receipt.",
+          });
+        if (entry.pending || entry.result?.ok)
+          return reply(await entry.promise);
+      } else {
+        // Self strikes still require current membership; peer allegations may reference a recent same-page call.
+        const room =
+          event === "report_nsfw_violation"
+            ? validSession(rooms, socket, packet)
+            : validSafetySession(rooms, socket, packet);
+        const member =
+          room && [room.u1, room.u2].find((member) => member.userId === uid);
+        const peer = room && member && (member === room.u1 ? room.u2 : room.u1);
+        if (!peer)
+          return reply({
+            ok: false,
+            retryable: false,
+            message: "This call is no longer available for a safety request.",
+          });
+        entry = {
+          roomId: packet.roomId,
+          sessionNonce: packet.sessionNonce,
+          room,
+          peer,
+          reason:
+            typeof packet.reason === "string" && packet.reason.trim()
+              ? packet.reason.trim().slice(0, 500)
+              : "client_content_flag",
+          expires: Date.now() + 600000,
+          pending: false,
+          result: null,
+        };
+        receipts.set(key, entry);
+        if (rooms.getRoom(packet.roomId) === room)
+          presence.endRoom({
+            io,
+            roomService: rooms,
+            roomId: packet.roomId,
+            goneSocketId: member.socketId,
+          });
       }
-
-      console.log(`🛑 User ${blockerId} blocked ${blockedUser.userId}`);
-      socket.emit("user_blocked", { message: "User blocked successfully." });
-
-      io.to(blockedUser.socketId).emit("stranger_disconnected");
-
-      socket.leave(roomId);
-      const otherSocket = io.sockets.sockets.get(blockedUser.socketId);
-      if (otherSocket) {
-        otherSocket.leave(roomId);
-      }
-
-      presenceService.clearRoom(roomId, roomService);
-      roomService.deleteRoom(roomId);
-    } catch (err) {
-      console.error("❌ Error blocking user:", err);
-      socket.emit("block_failed", { message: "Unable to block this user." });
-    }
-  });
-
-  // Client reporting automated critical NSFW violation on own local camera
-  socket.on("report_nsfw_violation", async ({ roomId } = {}) => {
-    const userId = socket.user?.uid;
-    if (!userId) return;
-
-    // Only an active room makes this a live-call report. Out-of-room reports
-    // (e.g. from a stale client) carry no peer exposure: recording a strike,
-    // forcing a cooldown or disconnecting the socket here would punish the
-    // user outside any call.
-    if (!roomId || !roomService.isMember(roomId, socket.id)) return;
-
-    console.warn(`🚨 Client self-reported critical NSFW violation: ${userId}`);
-    await dbService.recordViolation(userId, "local_nsfw_strike");
-
-    socket.emit("cooldown_active", { remaining: 30 });
-
-    if (roomId && roomService.isMember(roomId, socket.id)) {
-      const peer = roomService.getOtherUser(roomId, socket.id);
-      if (peer) {
-        io.to(peer.socketId).emit("stranger_disconnected", {
-          reason: "Partner was disconnected for content violations",
+      const rate = attempts.get(uid) || { start: Date.now(), count: 0 };
+      if (rate.count >= 10)
+        return reply({
+          ok: false,
+          message: "Too many safety requests. Please wait a minute.",
         });
-      }
-      socket.leave(roomId);
-      presenceService.clearRoom(roomId, roomService);
-      roomService.deleteRoom(roomId);
-    }
-
-    queue.remove(socket.id);
-    socket.disconnect(true);
-  });
-
-  // Client reporting automated critical NSFW violation on peer's camera feed
-  socket.on("report_peer_nsfw_violation", async ({ roomId } = {}) => {
-    const reporterId = socket.user?.uid;
-    if (!reporterId || !roomId) return;
-
-    if (!roomService.isMember(roomId, socket.id)) {
-      console.warn(`⚠️ Socket ${socket.id} attempted peer NSFW report on unjoined room ${roomId}`);
-      return;
-    }
-
-    const peer = roomService.getOtherUser(roomId, socket.id);
-    if (!peer) return;
-
-    if (isReportRateLimited(reporterId)) {
-      console.warn(`⚠️ Reporter ${reporterId} is rate limited (peer NSFW report cooldown)`);
-      socket.emit("report_failed", { message: "Please wait before submitting another report." });
-      return;
-    }
-
-    console.warn(`🚨 Peer content violation reported against: ${peer.userId} by ${reporterId}`);
-    await dbService.recordViolation(peer.userId, "peer_nsfw_detected");
-
-    const peerSocket = io.sockets.sockets.get(peer.socketId);
-    if (peerSocket) {
-      peerSocket.emit("cooldown_active", { remaining: 30 });
-      peerSocket.disconnect(true);
-    }
-
-    socket.emit("stranger_disconnected", {
-      reason: "Partner was disconnected for content violations",
-    });
-
-    socket.leave(roomId);
-    presenceService.clearRoom(roomId, roomService);
-    roomService.deleteRoom(roomId);
-  });
-
-  // Manual user report with reason
-  socket.on("report_user", async ({ roomId, reason } = {}) => {
-    const reporterId = socket.user?.uid;
-    if (!reporterId || !roomId) return;
-
-    if (!roomService.isMember(roomId, socket.id)) {
-      console.warn(`⚠️ Socket ${socket.id} attempted report on unjoined room ${roomId}`);
-      return;
-    }
-
-    const peer = roomService.getOtherUser(roomId, socket.id);
-    if (!peer) return;
-
-    if (isReportRateLimited(reporterId)) {
-      console.warn(`⚠️ Reporter ${reporterId} is rate limited (user report cooldown)`);
-      socket.emit("report_failed", { message: "Please wait before submitting another report." });
-      return;
-    }
-
-    console.log(`🚩 User report filed by ${reporterId} against ${peer.userId}: ${reason}`);
-    const safeReason =
-      typeof reason === "string" && reason.trim()
-        ? reason.trim().slice(0, 500)
-        : "user_reported";
-    await dbService.recordReport(reporterId, peer.userId, safeReason);
-
-    // Enforce 30-second cooldown on the reported peer
-    await dbService.recordViolation(peer.userId, "manual_user_report");
-
-    const peerSocket = io.sockets.sockets.get(peer.socketId);
-    if (peerSocket) {
-      peerSocket.emit("cooldown_active", { remaining: 30 });
-      io.to(peer.socketId).emit("stranger_disconnected");
-      peerSocket.leave(roomId);
-    }
-
-    socket.emit("user_reported", {
-      message: "Report received. The user has been disconnected.",
-    });
-
-    socket.leave(roomId);
-    presenceService.clearRoom(roomId, roomService);
-    roomService.deleteRoom(roomId);
-  });
-
-  // Normal room leave
-  socket.on("leave_room", ({ roomId } = {}) => {
-    if (!roomId) return;
-    if (!roomService.isMember(roomId, socket.id)) return;
-
-    presenceService.clearRoom(roomId, roomService);
-    socket.to(roomId).emit("stranger_disconnected");
-    socket.leave(roomId);
-    roomService.deleteRoom(roomId);
-  });
-
-  // Disconnect handler. A dropped transport is often a brief network blip,
-  // so rooms are HELD for a grace period (see presenceService) instead of
-  // being destroyed instantly; the partner is told to wait, and the room is
-  // only torn down if the user does not reconnect in time.
-  socket.on("disconnect", () => {
-    console.log(`🔴 Disconnected: ${socket.id}`);
-    queue.remove(socket.id);
-
-    const userId = socket.user?.uid;
-    const rooms = roomService.getRoomsForSocket(socket.id);
-    for (const roomId of rooms) {
-      if (!userId) {
-        // Cannot resume an anonymous socket: preserve the old immediate
-        // teardown behavior for unauthenticated connections.
-        const room = roomService.getRoom(roomId);
-        if (!room) continue;
-        const otherUser = roomService.getOtherUser(roomId, socket.id);
-        if (otherUser) {
-          io.to(otherUser.socketId).emit("stranger_disconnected");
+      rate.count++;
+      attempts.set(uid, rate);
+      const captured = entry;
+      captured.pending = true;
+      captured.promise = (async () => {
+        try {
+          let saved;
+          if (event === "block_user")
+            saved = await db.blockUser(uid, captured.peer.userId);
+          else if (event === "report_nsfw_violation")
+            saved = await db.recordViolation(uid, "local_nsfw_strike");
+          else
+            saved = await db.recordReport(
+              uid,
+              captured.peer.userId,
+              captured.reason,
+              packet.requestId,
+            );
+          if (!saved) throw new Error("Persistence failed");
+          // A late write can never end a different call or remove a new queue entry.
+          if (rooms.getRoom(captured.roomId) === captured.room) {
+            const member = [captured.room.u1, captured.room.u2].find(
+              (member) => member.userId === uid,
+            );
+            presence.endRoom({
+              io,
+              roomService: rooms,
+              roomId: captured.roomId,
+              goneSocketId: member.socketId,
+            });
+          }
+          return {
+            ok: true,
+            requestId: packet.requestId,
+            ...envelope(captured.roomId, captured.room),
+          };
+        } catch {
+          return {
+            ok: false,
+            message: "Unable to save your request. Please retry.",
+            requestId: packet.requestId,
+          };
         }
-        roomService.deleteRoom(roomId);
-        continue;
-      }
-      socket.leave(roomId);
-      presenceService.markAway({
+      })().then((result) => {
+        captured.pending = false;
+        captured.result = result;
+        return result;
+      });
+      reply(await captured.promise);
+    });
+  }
+  socket.on("leave_room", (packet, ack) => {
+    if (validSession(rooms, socket, packet))
+      presence.endRoom({
         io,
-        roomService,
+        roomService: rooms,
+        roomId: packet.roomId,
+        goneSocketId: socket.id,
+      });
+    if (typeof ack === "function") ack({ ok: true });
+  });
+  socket.on("disconnect", () => {
+    queue.remove(socket.id);
+    for (const roomId of rooms.getRoomsForSocket(socket.id)) {
+      socket.leave(roomId);
+      presence.markAway({
+        io,
+        roomService: rooms,
         roomId,
-        userId,
+        userId: socket.user?.uid,
         socketId: socket.id,
-        sessionId: presenceService.sessionOf(socket),
+        sessionId: presence.sessionOf(socket),
       });
     }
   });
-}
-
-module.exports = registerRoomSocket;
+};

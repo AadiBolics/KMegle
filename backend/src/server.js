@@ -1,4 +1,10 @@
 require("dotenv").config();
+if (
+  process.env.NODE_ENV === "production" &&
+  (!process.env.TURN_API_KEY ||
+    !/^[a-zA-Z0-9-]+$/.test(process.env.METERED_APP_NAME || ""))
+)
+  throw new Error("Production relay configuration is missing or invalid.");
 
 const express = require("express");
 const http = require("http");
@@ -18,7 +24,10 @@ const app = express();
 // Trust the first hop reverse proxy/load balancer so req.ip and
 // express-rate-limit see the real client IP (from X-Forwarded-For)
 // instead of the proxy's IP.
-app.set("trust proxy", 1);
+app.set(
+  "trust proxy",
+  process.env.TRUST_PROXY_HOPS ? Number(process.env.TRUST_PROXY_HOPS) : 1,
+);
 
 // --------------------------------------------------
 // Security Headers & Middleware
@@ -30,8 +39,8 @@ app.use(helmet());
 // KMEGLE-SEC-012: Strict CORS policy
 const allowedOrigins = [
   "http://localhost:3000",
-    // Canonical production frontend. Keep this exact origin, never a wildcard.
-    "https://kmegle.aadinadhan.me",
+  // Canonical production frontend. Keep this exact origin, never a wildcard.
+  "https://kmegle.aadinadhan.me",
   ...(process.env.FRONTEND_URL
     ? process.env.FRONTEND_URL.split(",").map((url) => url.trim())
     : []),
@@ -51,10 +60,10 @@ app.use(
       return callback(new Error(`CORS policy: origin ${origin} not allowed`));
     },
     credentials: true,
-  })
+  }),
 );
 
-app.use(express.json());
+app.use(express.json({ limit: "16kb" }));
 
 // --------------------------------------------------
 // Rate Limiting (KMEGLE-SEC-003)
@@ -67,7 +76,6 @@ async function identifyApiUser(req, res, next) {
   if (typeof header === "string" && header.startsWith("Bearer ")) {
     try {
       req.user = await verifyFirebaseToken(header.substring(7));
-
     } catch (_) {
       // Route auth still returns the normal 401/403. Invalid tokens share the
       // IP bucket, so rotating garbage tokens cannot evade the anonymous cap.
@@ -92,15 +100,34 @@ function makeLimiter(limit, message) {
   });
 }
 
-const generalLimiter = makeLimiter(100, "Too many requests, please try again later.");
-const strictLimiter = makeLimiter(20, "Rate limit exceeded for this endpoint.");
+const generalLimiter = makeLimiter(
+  100,
+  "Too many requests, please try again later.",
+);
+const turnLimiter = makeLimiter(
+  20,
+  "Too many credential requests. Please wait a minute.",
+);
+const adminLimiter = makeLimiter(
+  100,
+  "Too many admin requests. Please wait a minute.",
+);
 
 // Resolve identity before BOTH limits so neither collapses a campus NAT into
 // one bucket. Unauthenticated/invalid-token traffic remains IP limited.
+app.use(
+  "/api",
+  rateLimit({
+    windowMs: 60000,
+    limit: 10000,
+    standardHeaders: true,
+    legacyHeaders: false,
+  }),
+);
 app.use("/api", identifyApiUser);
 
-app.use("/api/turn-credentials", strictLimiter);
-app.use("/api/admin", strictLimiter);
+app.use("/api/turn-credentials", turnLimiter);
+app.use("/api/admin", adminLimiter);
 app.use("/api", generalLimiter);
 
 // --------------------------------------------------
@@ -125,7 +152,9 @@ app.use("/api", routes);
 app.use((err, req, res, next) => {
   console.error("❌ Unhandled Express error:", err.message);
   if (res.headersSent) return next(err);
-  res.status(err.message?.startsWith("CORS") ? 403 : 500).json({ error: "Request failed" });
+  res
+    .status(err.message?.startsWith("CORS") ? 403 : 500)
+    .json({ error: "Request failed" });
 });
 
 // --------------------------------------------------
@@ -133,14 +162,19 @@ app.use((err, req, res, next) => {
 // --------------------------------------------------
 
 const shutdown = (signal) => {
+  if (app.get("draining")) return;
+  app.set("draining", true);
+  app.set("schemaReady", false);
   console.log(`\n🛑 Received ${signal}. Initiating graceful shutdown...`);
 
   // Inform active chat peers
   try {
     const activeRooms = roomService.getAllRooms();
     for (const [roomId] of activeRooms.entries()) {
-      io.to(roomId).emit("stranger_disconnected", {
-        reason: "Server is restarting or shutting down",
+      require("./services/presenceService").endRoom({
+        io,
+        roomService,
+        roomId,
       });
     }
   } catch (err) {
@@ -148,7 +182,7 @@ const shutdown = (signal) => {
   }
 
   // Stop accepting new connections
-  server.close(async () => {
+  io.close(async () => {
     console.log("🔒 HTTP & Socket server closed.");
     try {
       await db.end();
@@ -181,6 +215,13 @@ process.on("SIGINT", () => shutdown("SIGINT"));
 
 const PORT = process.env.PORT || 5000;
 
-server.listen(PORT, "0.0.0.0", () => {
-  console.log(`🚀 Signaling Server is running on port ${PORT}`);
-});
+require("./services/migrate")(db)
+  .then(() => {
+    app.set("schemaReady", true);
+    server.listen(PORT, "0.0.0.0", () => console.log("Signaling server ready"));
+  })
+  .catch(async () => {
+    console.error("Database migration failed; server will not start.");
+    await db.end();
+    process.exitCode = 1;
+  });

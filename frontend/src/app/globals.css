@@ -12,6 +12,20 @@ html.dark body {
   background-color: #221c16;
 }
 
+/* Keep legacy public-page accent text readable on the paper dark surfaces. */
+.dark .text-\[\#C24A17\] {
+  color: #edaa83;
+}
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    scroll-behavior: auto !important;
+    transition: none !important;
+  }
+}
+
 /* Paper direction: serif display face for the wordmark and headings. */
 .font-display {
   font-family: var(--font-fraunces), Georgia, "Times New Roman", serif;

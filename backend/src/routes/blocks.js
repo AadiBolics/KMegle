@@ -17,9 +17,13 @@ router.get("/", httpFirebaseAuth, async (req, res) => {
           created_at
         FROM user_blocks
         WHERE blocker_id = $1
-        ORDER BY created_at DESC
+        ORDER BY created_at DESC, block_ref DESC
+        LIMIT 20 OFFSET $2
       `,
-      [blockerId]
+      [
+        blockerId,
+        Math.max(0, Math.min(10000, parseInt(req.query.offset, 10) || 0)),
+      ],
     );
 
     const blockedUsers = result.rows.map((row) => ({
@@ -43,7 +47,7 @@ router.delete("/:blockRef", httpFirebaseAuth, async (req, res) => {
     const blockerId = req.user.uid;
     const { blockRef } = req.params;
 
-    if (!blockRef) {
+    if (typeof blockRef !== "string" || !/^[0-9a-f-]{36}$/i.test(blockRef)) {
       return res.status(400).json({
         error: "Block reference is required",
       });
@@ -56,7 +60,7 @@ router.delete("/:blockRef", httpFirebaseAuth, async (req, res) => {
           AND block_ref = $2
         RETURNING block_ref
       `,
-      [blockerId, blockRef]
+      [blockerId, blockRef],
     );
 
     if (result.rowCount === 0) {

@@ -1,4 +1,4 @@
-const { Server } = require("socket.io");
+﻿const { Server } = require("socket.io");
 
 const authenticateSocket = require("../middleware/firebaseAuth");
 const syncUser = require("../middleware/syncUser");
@@ -30,7 +30,7 @@ function createSocketServer(server) {
           return callback(null, true);
         }
 
-        console.warn(`⚠️ CORS blocked origin: ${origin}`);
+        console.warn(`âš ï¸ CORS blocked origin: ${origin}`);
         return callback(new Error(`CORS policy: origin ${origin} not allowed`));
       },
       methods: ["GET", "POST"],
@@ -39,14 +39,26 @@ function createSocketServer(server) {
   });
 
   io.engine.on("connection_error", (err) => {
-    console.error("❌ ENGINE CONNECTION ERROR:", err.message);
+    console.error("âŒ ENGINE CONNECTION ERROR:", err.message);
   });
 
   // Step 1: Firebase authentication
   io.use((socket, next) => {
+    if (
+      socket.handshake.auth?.protocolVersion !== 2 ||
+      !require("../services/presenceService").sessionOf(socket)
+    ) {
+      const error = new Error("Please reload to update the call protocol.");
+      error.data = { retryable: false, code: "PROTOCOL_VERSION" };
+      return next(error);
+    }
+    next();
+  });
+  io.use((socket, next) => {
     authenticateSocket(socket, (error) => {
       if (error) {
-        console.error("❌ Socket authentication failed:", error.message);
+        error.data = { retryable: false, code: "AUTH_REJECTED" };
+        console.error("âŒ Socket authentication failed:", error.message);
         return next(error);
       }
       next();
@@ -54,10 +66,24 @@ function createSocketServer(server) {
   });
 
   // Step 2: Sync authenticated user into PostgreSQL
-  io.use(syncUser);
+  io.use((socket, next) =>
+    syncUser(socket, (error) => {
+      if (error) error.data = { retryable: true, code: "SERVICE_UNAVAILABLE" };
+      next(error);
+    }),
+  );
 
   // Step 3: Check ban status
-  io.use(banCheck);
+  io.use((socket, next) =>
+    banCheck(socket, (error) => {
+      if (error)
+        error.data = {
+          retryable: error.message === "Unable to verify account status",
+          code: "ELIGIBILITY_REJECTED",
+        };
+      next(error);
+    }),
+  );
 
   io.on("connection", (socket) => {
     // Sliding window per-socket rate limiter: max 50 events per second (KMEGLE-SEC-003)
@@ -73,17 +99,15 @@ function createSocketServer(server) {
       }
       eventCount++;
       if (eventCount > 50) {
-        console.warn(`⚠️ Socket ${socket.id} exceeded event rate limit (>50 events/sec). Dropping event: ${event}`);
+        console.warn(
+          `âš ï¸ Socket ${socket.id} exceeded event rate limit (>50 events/sec). Dropping event: ${event}`,
+        );
         return; // Drop excess packet without calling next()
       }
       next();
     });
 
-    console.log(
-      "🟢 Socket connected:",
-      socket.id,
-      socket.user?.email
-    );
+    console.log("🟢 Socket connected:", socket.id, "verified account");
   });
 
   return io;

@@ -2,6 +2,7 @@ const { verifyFirebaseToken, AuthError } = require("./authHelpers");
 
 async function httpFirebaseAuth(req, res, next) {
   try {
+    if (req.user?.uid) return next(); // Set only by the verified API identity middleware.
     const authHeader = req.headers.authorization;
 
     if (!authHeader || !authHeader.startsWith("Bearer ")) {
@@ -18,15 +19,15 @@ async function httpFirebaseAuth(req, res, next) {
 
     next();
   } catch (error) {
-    console.error(
-      "❌ HTTP Firebase authentication failed:",
-      error.message
-    );
+    console.error("❌ HTTP Firebase authentication failed:", error.message);
 
     if (error instanceof AuthError) {
-      const status = error.message === "Email must be verified" ? 403
-        : error.message === "Only IIIT Kottayam accounts are allowed" ? 403
-        : 401;
+      const status =
+        error.message === "Email must be verified"
+          ? 403
+          : error.message === "Only IIIT Kottayam accounts are allowed"
+            ? 403
+            : 401;
 
       return res.status(status).json({
         error: error.message,

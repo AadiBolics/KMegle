@@ -1,4 +1,5 @@
 const activeRooms = new Map();
+const recentRooms = new Map();
 
 const roomService = {
   createRoom(roomId, user1, user2) {
@@ -6,10 +7,12 @@ const roomService = {
       u1: {
         userId: user1.userId,
         socketId: user1.socket.id,
+        pageSessionId: user1.socket.handshake?.auth?.sessionId,
       },
       u2: {
         userId: user2.userId,
         socketId: user2.socket.id,
+        pageSessionId: user2.socket.handshake?.auth?.sessionId,
       },
     });
   },
@@ -29,10 +32,7 @@ const roomService = {
       return false;
     }
 
-    return (
-      room.u1.socketId === socketId ||
-      room.u2.socketId === socketId
-    );
+    return room.u1.socketId === socketId || room.u2.socketId === socketId;
   },
 
   getOtherUser(roomId, socketId) {
@@ -57,10 +57,7 @@ const roomService = {
     const rooms = [];
 
     for (const [roomId, room] of activeRooms.entries()) {
-      if (
-        room.u1.socketId === socketId ||
-        room.u2.socketId === socketId
-      ) {
+      if (room.u1.socketId === socketId || room.u2.socketId === socketId) {
         rooms.push(roomId);
       }
     }
@@ -72,11 +69,17 @@ const roomService = {
   updateSocketId(roomId, userId, newSocketId, oldSocketId) {
     const room = activeRooms.get(roomId);
     if (!room) return false;
-    if (room.u1.userId === userId && (!oldSocketId || room.u1.socketId === oldSocketId)) {
+    if (
+      room.u1.userId === userId &&
+      (!oldSocketId || room.u1.socketId === oldSocketId)
+    ) {
       room.u1.socketId = newSocketId;
       return true;
     }
-    if (room.u2.userId === userId && (!oldSocketId || room.u2.socketId === oldSocketId)) {
+    if (
+      room.u2.userId === userId &&
+      (!oldSocketId || room.u2.socketId === oldSocketId)
+    ) {
       room.u2.socketId = newSocketId;
       return true;
     }
@@ -84,7 +87,25 @@ const roomService = {
   },
 
   deleteRoom(roomId) {
+    const room = activeRooms.get(roomId);
+    if (room)
+      recentRooms.set(roomId, {
+        room: { ...room, u1: { ...room.u1 }, u2: { ...room.u2 } },
+        expires: Date.now() + 300000,
+      });
+    for (const [id, entry] of recentRooms)
+      if (entry.expires < Date.now()) recentRooms.delete(id);
+    while (recentRooms.size > 2000)
+      recentRooms.delete(recentRooms.keys().next().value);
     activeRooms.delete(roomId);
+  },
+  getRecentRoom(roomId) {
+    const entry = recentRooms.get(roomId);
+    if (!entry || entry.expires < Date.now()) {
+      recentRooms.delete(roomId);
+      return null;
+    }
+    return entry.room;
   },
 
   getAllRooms() {

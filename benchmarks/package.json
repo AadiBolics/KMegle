@@ -4,13 +4,16 @@
   "description": "Standalone load/benchmark scripts for KMegle — not part of the deployed app.",
   "scripts": {
     "matchmaker": "node matchmaker/benchmark.js",
-    "socketio-load": "node socketio-load/benchmark.js"
+    "socketio-load": "node socketio-load/benchmark.js",
+    "test:ui": "node ui-regression.cjs",
+    "test:worker": "node worker-regression.cjs"
   },
   "dependencies": {
     "firebase-admin": "^13.10.0",
     "socket.io-client": "^4.8.3"
   },
   "devDependencies": {
+    "esbuild": "^0.28.2",
     "playwright": "^1.64.1"
   }
 }

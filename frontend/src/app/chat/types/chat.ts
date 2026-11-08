@@ -1,4 +1,5 @@
 export interface ChatMessage {
+  id?: string;
   sender: "me" | "stranger" | "system";
   text: string;
 }
@@ -10,4 +11,5 @@ export type ConnectionPhase =
   | "connecting"
   | "waiting"
   | "negotiating"
-  | "live";
+  | "live"
+  | "ended";

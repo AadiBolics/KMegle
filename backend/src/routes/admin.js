@@ -1,147 +1,118 @@
-const express = require("express");
-
+﻿const express = require("express");
 const db = require("../config/db");
 const adminAuth = require("../middleware/adminAuth");
-const roomService = require("../services/roomService");
-
+const rooms = require("../services/roomService");
+const presence = require("../services/presenceService");
 const router = express.Router();
-
-// Fetch all users
-router.get(
-  "/users",
-  adminAuth,
-  async (req, res) => {
-    try {
-      const result = await db.query(`
-        SELECT
-          id,
-          email_hash,
-          is_banned,
-          created_at
-        FROM users
-        ORDER BY created_at DESC
-      `);
-
-      res.json(result.rows);
-    } catch (err) {
-      console.error(
-        "❌ Error fetching admin users:",
-        err
-      );
-
-      res.status(500).json({
-        error: "Database error",
-      });
-    }
+router.use(adminAuth);
+const offset = (req) =>
+  Math.max(0, Math.min(100000, parseInt(req.query.offset, 10) || 0));
+router.get("/users", async (req, res) => {
+  try {
+    const search =
+      typeof req.query.search === "string"
+        ? req.query.search.slice(0, 100)
+        : "";
+    const result = await db.query(
+      "SELECT id,is_banned,created_at FROM users WHERE id ILIKE $1 ORDER BY created_at DESC,id LIMIT 25 OFFSET $2",
+      [`%${search}%`, offset(req)],
+    );
+    res.json(result.rows);
+  } catch {
+    res.status(503).json({ error: "Unable to load accounts" });
   }
-);
-
-// Fetch user reports
-router.get(
-  "/reports",
-  adminAuth,
-  async (req, res) => {
-    try {
-      const result = await db.query(`
-        SELECT id, reporter_id, reported_id, reason, status, created_at
-        FROM reports
-        ORDER BY created_at DESC
-        LIMIT 100
-      `);
-
-      res.json(result.rows);
-    } catch (err) {
-      console.error("❌ Error fetching reports:", err);
-      res.status(500).json({ error: "Database error" });
-    }
+});
+router.get("/reports", async (req, res) => {
+  try {
+    const status = ["pending", "reviewed", "dismissed"].includes(
+      req.query.status,
+    )
+      ? req.query.status
+      : "pending";
+    const result = await db.query(
+      "SELECT id,reporter_id,reported_id,reason,status,created_at FROM reports WHERE status=$1 ORDER BY created_at DESC,id LIMIT 25 OFFSET $2",
+      [status, offset(req)],
+    );
+    res.json(result.rows);
+  } catch {
+    res.status(503).json({ error: "Unable to load reports" });
   }
-);
-
-// Toggle ban status
-router.post(
-  "/ban",
-  adminAuth,
-  async (req, res) => {
-    const {
-      userId,
-      banStatus,
-    } = req.body;
-
-    if (typeof userId !== "string" || userId.trim().length === 0) {
-      return res.status(400).json({
-        error: "userId must be a non-empty string",
-      });
+});
+router.post("/reports/:id", async (req, res) => {
+  if (
+    !/^[0-9a-f-]{36}$/i.test(req.params.id) ||
+    !["pending", "reviewed", "dismissed"].includes(req.body?.status)
+  )
+    return res.status(400).json({ error: "Invalid report update" });
+  const client = await db.connect();
+  try {
+    await client.query("BEGIN");
+    const result = await client.query(
+      "UPDATE reports SET status=$1 WHERE id=$2 RETURNING id",
+      [req.body.status, req.params.id],
+    );
+    if (!result.rowCount) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ error: "Report not found" });
     }
-
-    if (typeof banStatus !== "boolean") {
-      return res.status(400).json({
-        error: "banStatus must be a boolean",
-      });
+    await client.query(
+      "INSERT INTO admin_actions(admin_uid,action,subject) VALUES($1,$2,$3)",
+      [req.admin.uid, `report_${req.body.status}`, req.params.id],
+    );
+    await client.query("COMMIT");
+    res.json({ success: true });
+  } catch {
+    await client.query("ROLLBACK");
+    res.status(503).json({ error: "Update not saved" });
+  } finally {
+    client.release();
+  }
+});
+router.post("/ban", async (req, res) => {
+  const { userId, banStatus } = req.body || {};
+  if (
+    typeof userId !== "string" ||
+    !userId.trim() ||
+    userId.length > 128 ||
+    typeof banStatus !== "boolean"
+  )
+    return res.status(400).json({ error: "Invalid account update" });
+  const client = await db.connect();
+  try {
+    await client.query("BEGIN");
+    const result = await client.query(
+      "UPDATE users SET is_banned=$1 WHERE id=$2 RETURNING id",
+      [banStatus, userId],
+    );
+    if (!result.rowCount) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ error: "Account not found" });
     }
-
-    try {
-      const updateResult = await db.query(
-        `
-          UPDATE users
-          SET is_banned = $1
-          WHERE id = $2
-        `,
-        [banStatus, userId]
-      );
-
-      if (updateResult.rowCount === 0) {
-        return res.status(404).json({
-          error: "No user found with that userId",
-          rowCount: 0,
-        });
-      }
-
-      // KMEGLE-SEC-006: Immediately disconnect active socket sessions if banned
-      if (banStatus) {
-        const io = req.app.get("io");
-        if (io) {
-          for (const [socketId, s] of io.sockets.sockets.entries()) {
-            if (s.user?.uid === userId) {
-              // Notify any paired stranger in active rooms
-              const rooms = roomService.getRoomsForSocket(s.id);
-              for (const roomId of rooms) {
-                const otherUser = roomService.getOtherUser(roomId, s.id);
-                if (otherUser) {
-                  io.to(otherUser.socketId).emit("stranger_disconnected", {
-                    reason: "Stranger disconnected.",
-                  });
-                }
-                roomService.deleteRoom(roomId);
-              }
-
-              s.emit("banned_alert", {
-                message: "Your account has been suspended by an administrator.",
-              });
-              s.disconnect(true);
-              console.log(
-                `🔨 Disconnected live session for banned user ${userId} (${socketId})`
-              );
-            }
-          }
+    await client.query(
+      "INSERT INTO admin_actions(admin_uid,action,subject) VALUES($1,$2,$3)",
+      [req.admin.uid, banStatus ? "suspend" : "restore", userId],
+    );
+    await client.query("COMMIT");
+    if (banStatus) {
+      const io = req.app.get("io");
+      if (io) {
+        for (const [roomId, room] of rooms.getAllRooms()) {
+          if ([room.u1, room.u2].some((member) => member.userId === userId))
+            presence.endRoom({ io, roomService: rooms, roomId });
         }
+        for (const socket of io.sockets.sockets.values())
+          if (socket.user?.uid === userId) {
+            socket.emit("banned_alert", { message: "Account suspended" });
+            socket.disconnect(true);
+          }
       }
-
-      res.json({
-        success: true,
-        rowCount: updateResult.rowCount,
-      });
-    } catch (err) {
-      console.error(
-        "❌ Error updating ban status:",
-        err
-      );
-
-      res.status(500).json({
-        error:
-          "Failed to update ban status",
-      });
     }
+    res.json({ success: true });
+  } catch {
+    await client.query("ROLLBACK");
+    res.status(503).json({ error: "Account update not saved" });
+  } finally {
+    client.release();
   }
-);
-
+});
 module.exports = router;

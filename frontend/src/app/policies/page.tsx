@@ -1,35 +1,72 @@
-import Link from "next/link";
-export default function PoliciesPage(){return <main className="min-h-screen bg-[#F7F2EA] dark:bg-[#221C16] text-[#4A4238] dark:text-[#C9BCAB] px-4 py-8"><div className="mx-auto max-w-2xl space-y-8"><Link href="/" className="inline-flex min-h-11 items-center underline text-[#C24A17]">Back to KMegle</Link><h1 className="font-display text-3xl font-bold text-[#211B14] dark:text-[#F7F2EA]">Terms &amp; Privacy</h1><section><h2 className="font-display text-xl font-semibold text-[#211B14] dark:text-[#F7F2EA] mb-4">Terms of Service</h2><div className="text-sm leading-relaxed">                  <div className="space-y-4">
-                    <div>
-                      <h4 className="font-semibold text-base mb-1">1. Age Requirement</h4>
-                      <p>
-                        You must be at least 18 years old (or the legal age of majority in your jurisdiction) to use KMegle video chat. Minors under 18 are strictly prohibited from using the platform.
-                      </p>
-                    </div>
-
-                    <div>
-                      <h4 className="font-semibold text-base mb-1">2. Peer-to-Peer (P2P) WebRTC Architecture</h4>
-                      <p>
-                        KMegle connects users via WebRTC, directly when possible or through a TURN relay when needed. Direct connections use Peer-to-Peer protocols for real-time video and audio communication. By using KMegle, you understand and acknowledge that P2P technology inherently exchanges network connection details (including public IP addresses) directly between video chat peers.
-                      </p>
-                    </div>
-
-                    <div>
-                      <h4 className="font-semibold text-base mb-1">3. User Conduct & Moderation</h4>
-                      <p>
-                        You agree to follow all local, state, and international laws. KMegle reserves the right to terminate access, suspend accounts, or permanently block Firebase UIDs and IP addresses without prior notice for any violation of these terms.
-                      </p>
-                    </div>
-
-                    <div>
-                      <h4 className="font-semibold text-base mb-1">4. Recording Disclaimer</h4>
-                      <p>
-                        While KMegle does not record or store any video or audio streams, we cannot prevent third-party peers from using external screen recording software. Never share personally identifiable information (PII), financial details, or passwords during video chats.
-                      </p>
-                    </div>
-                  </div></div></section><section><h2 className="font-display text-xl font-semibold text-[#211B14] dark:text-[#F7F2EA] mb-4">Before you connect</h2><div className="space-y-4 text-sm leading-relaxed text-[#4A4238] dark:text-[#C9BCAB]">
-<p>KMegle uses Google sign-in through Firebase Authentication. The service receives your account ID and email. Its database stores your account ID and a keyed hash of your email; service logs may include your email and account ID.</p>
-<p>Video and audio use WebRTC. Connections may be direct or use a TURN relay when needed. A direct connection can reveal your public IP address to the other participant. KMegle&apos;s reviewed application code does not record video or audio, but another participant can record their screen.</p>
-<p>For safety, KMegle stores reports, report reasons, blocks and violation records linked to account IDs. Automated content checks run in the browser during a session.</p>
-<p>Retention periods and the policies of hosting, authentication and relay providers still need to be confirmed. Do not share passwords, financial details or other private information in a chat.</p>
-</div></section><p className="text-sm">Support: <a className="underline text-[#C24A17] break-all" href="mailto:aadinadhan17@gmail.com">aadinadhan17@gmail.com</a></p></div></main>}
+﻿import Link from "next/link";
+import "../chat/components/chat/call.css";
+export const metadata = {
+  title: "Community & privacy | KMegle",
+  alternates: { canonical: "/policies" },
+};
+export default function PoliciesPage() {
+  return (
+    <main className="call-app consent-page">
+      <article className="account-card">
+        <Link href="/">← Home</Link>
+        <h1>Community & privacy</h1>
+        <p>
+          Version 2026-11-08 · For adults studying at IIIT Kottayam. Verified
+          college sign-in is required. Explicitly configured test accounts may
+          be used for development and staging.
+        </p>
+        <h2>Look after each other.</h2>
+        <p>
+          Be respectful. Do not share sexual content, harass, threaten,
+          discriminate, spam or expose personal information. You must be at
+          least 18. You can leave immediately, report a concern or block future
+          matches. Administrators can review reports and suspend accounts.
+          Reports and automated flags are allegations, not proof.
+        </p>
+        <h2>What you share</h2>
+        <p>
+          Camera check captures on your device. Finding a student starts
+          matching and can transmit live audio/video when connected. Muting or
+          turning the camera off disables that track. End turns off camera and
+          microphone capture.
+        </p>
+        <p>
+          WebRTC attempts a direct connection and uses a TURN relay when needed.
+          Direct connections can reveal network details, including public IP
+          addresses, to the other participant. The application does not record
+          video or audio. Another participant can record their screen.
+        </p>
+        <h2>Account and safety data</h2>
+        <p>
+          Google sign-in uses Firebase Authentication. The service receives your
+          account ID and email. The database stores your account ID and a keyed
+          hash of your email, sign-in times, access status, versioned agreement,
+          blocks, reports and report reasons. Admin actions are logged. Reports
+          do not include a video recording.
+        </p>
+        <p>
+          Text uses the peer data channel. This application does not persist
+          chat text on its server. Keep passwords, financial information and
+          personal details out of messages and reports. Automated video checks
+          run locally when available, can make mistakes and may fail to load.
+          They are not human monitoring or a guarantee of safety.
+        </p>
+        <h2>Service providers and retention</h2>
+        <p>
+          The hosting, authentication and relay providers handle data needed to
+          operate the service. Retention periods and provider-specific practices
+          still require confirmation. Infrastructure logs may include network
+          metadata. Optional staging connection snapshots contain connection
+          types and metrics; they exclude IP addresses, SDP, credentials and
+          identities.
+        </p>
+        <h2>Questions or account concerns</h2>
+        <p>
+          Contact{" "}
+          <a href="mailto:aadinadhan17@gmail.com">aadinadhan17@gmail.com</a> for
+          support, to dispute an account action, or to ask about your data.
+        </p>
+      </article>
+    </main>
+  );
+}

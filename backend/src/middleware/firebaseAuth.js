@@ -1,4 +1,4 @@
-const { verifyFirebaseToken, AuthError } = require("./authHelpers");
+﻿const { verifyFirebaseToken, AuthError } = require("./authHelpers");
 
 async function authenticateSocket(socket, next) {
   try {
@@ -8,13 +8,9 @@ async function authenticateSocket(socket, next) {
 
     socket.user = user;
 
-    console.log(
-      `🔐 Authenticated: ${socket.user.email} (${socket.user.uid})`
-    );
-
     next();
   } catch (error) {
-    console.error("❌ Socket authentication failed:", error.message);
+    console.error("âŒ Socket authentication failed:", error.message);
 
     if (error instanceof AuthError) {
       return next(error);
